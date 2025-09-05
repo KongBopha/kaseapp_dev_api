@@ -2,66 +2,83 @@
 
 namespace App\Http\Controllers;
 
-use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Models\Product;
+use Illuminate\Support\Facades\Validator;
 
 class ProductController extends Controller
 {
-    /**
-     * Display a listing of the resource.
-     */
     public function index()
     {
-        //
-        $products = Product::all();
-        return response()->json([
-            'success' => true,
-            'data' => $products
-        ]);
+        try {
+            $products = Product::all();
+            return response()->json([
+                'success' => true,
+                'data' => $products
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to fetch products',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 
-    /**
-     * Store a newly created resource in storage.
-     */
     public function store(Request $request)
     {
-        //
-        $validated = $request->validate([
+        $validator = Validator::make($request->all(), [
             'owner_id' => 'required|integer|exists:users,id',
             'name' => 'required|string|max:255',
             'description' => 'nullable|string',
             'unit' => 'required|string|max:50',
             'image' => 'nullable|string|max:255'
         ]);
-        
-        // create product
-        $product = Product::create($validated);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation errors',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $product = Product::create($validator->validated());
 
         return response()->json([
             'success' => true,
-            'message' => "Product created successfully",
-            'data'=> $product
+            'message' => 'Product created successfully',
+            'data' => $product
         ], 201);
     }
 
-    /**
-     * Display the specified resource.
-     */
-    public function show(string $id)
+    public function show($id)
     {
-        //
+        try {
+            $product = Product::findOrFail($id);
+            return response()->json([
+                'success' => true,
+                'data' => $product
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Product not found',
+            ], 404);
+        }
     }
 
-    /**
-     * Update the specified resource in storage.
-     */
     public function update(Request $request, $id)
     {
-        //
-        $product = Product::findOrFail($id);
+        $product = Product::find($id);
+        if (!$product) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Product not found'
+            ], 404);
+        }
 
-        $validated = $request->validate([
+        $validator = Validator::make($request->all(), [
             'owner_id' => 'required|integer|exists:users,id',
             'name' => 'required|string|max:255',
             'description' => 'nullable|string',
@@ -69,27 +86,48 @@ class ProductController extends Controller
             'image' => 'nullable|string|max:255'
         ]);
 
-        $product->update($validated);
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation errors',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $product->update($validator->validated());
 
         return response()->json([
             'success' => true,
-            'message' => "Product updated successfully",
-            'data'=> $product
+            'message' => 'Product updated successfully',
+            'data' => $product
         ]);
     }
 
-    /**
-     * Remove the specified resource from storage.
-     */
-    public function destroy(string $id)
-
+    public function destroy($id)
     {
-        $product = Product::findOrFail($id);
+        $product = Product::find($id);
+        if (!$product) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Product not found'
+            ], 404);
+        }
+
         $product->delete();
+
         return response()->json([
             'success' => true,
-            'message' => "Product deleted successfully"
+            'message' => 'Product deleted successfully'
         ]);
+    }
+        // Fetch only product names
+    public function productNames()
+    {
+        $products = Product::select('id', 'name')->get();
 
+        return response()->json([
+            'success' => true,
+            'data' => $products,
+        ]);
     }
 }

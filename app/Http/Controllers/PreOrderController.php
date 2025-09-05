@@ -4,11 +4,15 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use App\Models\PreOrder;
+use App\Models\User;
 use App\Models\Farm;
 use App\Models\OrderDetail;
 use App\Services\NotificationService;
 use Illuminate\Support\Facades\Auth;
-use App\Http\Requests\PreOrderRequest;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\DB;
+
+
 
 class PreOrderController extends Controller
 {
@@ -19,122 +23,144 @@ class PreOrderController extends Controller
         $this->notificationService = $notificationService;
     }
 
-    // GET all pre-orders with pagination
-    public function index()
+    // Vendor creates a pre-order
+    public function store(Request $request)
     {
-        $preOrders = PreOrder::with('product')->paginate(10);
+        $user = auth()->user();
 
-        $preOrders->getCollection()->transform(function ($order) {
-            $order->product_name = $order->product_id
-                ? $order->product->name
-                : $order->input_product_name;
-            return $order;
-        });
+        if ($user->role !== 'vendor') {
+            return response()->json(['success' => false, 'message' => 'Only vendors can create pre-orders.'], 403);
+        }
 
-        return response()->json([
-            'success' => true,
-            'data' => $preOrders->items(),
-            'meta' => [
-                'current_page' => $preOrders->currentPage(),
-                'last_page' => $preOrders->lastPage(),
-                'total' => $preOrders->total()
-            ]
+        $data = $request->validate([
+            'product_id'    => 'required|exists:products,id',
+            'qty'           => 'required|integer|min:1',
+            'delivery_date' => 'nullable|date',
+            'location'      => 'nullable|string',
+            'note_text'     => 'nullable|string',
         ]);
+
+        $data['user_id'] = $user->id; // vendor
+
+        try {
+            DB::beginTransaction();
+
+            // Create the pre-order
+            $preOrder = PreOrder::create($data);
+
+            // Notify all farmers
+            $this->notificationService->notifyFarmers($preOrder);
+
+            DB::commit();
+
+            return response()->json(['success' => true, 'data' => $preOrder], 201);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to create pre-order and notifications.',
+                'error'   => $e->getMessage()
+            ], 500);
+        }
     }
 
-    // GET single pre-order
-    public function show($id)
-    {
-        $preOrder = PreOrder::with('product')->findOrFail($id);
-        return response()->json(['success' => true, 'data' => $preOrder]);
-    }
 
-    // CREATE pre-order (vendor only)
-    public function store(PreOrderRequest $request)
+    // Vendor confirms or rejects farm offer
+    public function confirmOffer(Request $request, $orderDetailId)
     {
         $user = Auth::user();
         if ($user->role !== 'vendor') {
-            return response()->json(['success'=>false,'message'=>'Only vendors can create pre-orders.'],403);
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
         }
 
-        $validated = $request->validated();
-
-        if (!$validated['product_id'] && empty($validated['input_product_name'])) {
-            return response()->json(['success'=>false,'message'=>'Please select a product or enter a custom product name.'],422);
-        }
-
-        $preOrder = PreOrder::create($validated);
-
-        // Notify all farms
-        $farms = Farm::all();
-        $farmUserIds = $farms->pluck('owner_id')->toArray();
-
-        $this->notificationService->sendToUsers(
-            $request->user_id,
-            $farmUserIds,
-            'pre_order',
-            "New pre-order request: {$request->qty} units of product ID {$request->product_id}",
-            $preOrder->id
-        );
-
-        return response()->json(['success'=>true,'message'=>'Pre-order created successfully','data'=>$preOrder],201);
-    }
-
-    // UPDATE pre-order
-    public function update(Request $request, $id)
-    {
-        $preOrder = PreOrder::findOrFail($id);
-        if ($preOrder->status !== 'pending') {
-            return response()->json(['success'=>false,'message'=>'Only pending pre-orders can be updated'],403);
-        }
-
-        $validated = $request->validate([
-            'user_id' => 'sometimes|integer',
-            'product_id' => 'sometimes|integer',
-            'qty' => 'sometimes|numeric|min:0.01',
-            'location' => 'sometimes|string',
-            'note_text' => 'nullable|string',
-            'delivery_date' => 'sometimes|date',
-            'recurring_schedule' => 'nullable|string',
-            'input_product_name' => 'nullable|string|max:255'
+        $validator = Validator::make($request->all(), [
+            'action' => 'required|in:accept,reject',
         ]);
 
-        $preOrder->update($validated);
-        return response()->json(['success'=>true,'message'=>'Pre-order updated','data'=>$preOrder]);
-    }
-
-    // DELETE pre-order
-    public function destroy($id)
-    {
-        $preOrder = PreOrder::findOrFail($id);
-        if ($preOrder->status !== 'pending') {
-            return response()->json(['success'=>false,'message'=>'Only pending pre-orders can be deleted'],403);
+        if ($validator->fails()) {
+            return response()->json(['success'=>false,'errors'=>$validator->errors()],422);
         }
 
-        $preOrder->delete();
-        return response()->json(['success'=>true,'message'=>'Pre-order deleted'],204);
+        $orderDetail = OrderDetail::findOrFail($orderDetailId);
+
+        $orderDetail->offer_status = $request->action === 'accept' ? 'accepted' : 'rejected';
+        $orderDetail->save();
+
+        // Notify farm
+        $this->notificationService->notifyFarm($orderDetail);
+        // Update pre_order status based on confirmed offers
+        $this->updatePreOrderStatus($orderDetail->pre_order_id);
+
+        return response()->json(['success'=>true, 'message'=>'Offer processed']);
     }
 
-    // GET pre-orders by user
-    public function getByUser($user_id)
-    {
-        $preOrders = PreOrder::where('user_id',$user_id)->with('product')->get();
-        return response()->json(['success'=>true,'data'=>$preOrders]);
-    }
-
-    // Update pre-order status based on confirmed offers
+    // Calculate pre-order status based on confirmed offers
     public function updatePreOrderStatus($preOrderId)
     {
         $preOrder = PreOrder::findOrFail($preOrderId);
         $totalRequested = $preOrder->qty;
-        $totalConfirmed = OrderDetail::where('pre_order_id',$preOrderId)
-            ->where('offer_status','accepted')
+
+        $totalConfirmed = OrderDetail::where('pre_order_id', $preOrderId)
+            ->where('offer_status', 'accepted')
             ->sum('fulfilled_qty');
 
-        if ($totalConfirmed == 0) $status = 'pending';
-        elseif ($totalConfirmed < $totalRequested) $status = 'partially_fulfilled';
-        else $status = 'fulfilled';
+        if ($totalConfirmed == 0) {
+            $status = 'pending';
+        } elseif ($totalConfirmed < $totalRequested) {
+            $status = 'partially_fulfilled';
+        } else {
+            $status = 'fulfilled';
+        }
 
-        $preOrder->update(['status' => $status]);
+        $preOrder->status = $status;
+        $preOrder->save();
+    }
+        /**
+     * List order details for the authenticated farmer
+     */
+    public function index(Request $request) 
+    {
+        $user = auth()->user(); // farmer
+
+        $preOrders = PreOrder::with(['user', 'product'])
+            ->where('status', 'pending')
+            ->whereDoesntHave('orderDetails', function ($query) use ($user) {
+                $query->where('farm_id', $user->farm_id);
+            })
+            ->orderBy('created_at', 'desc')
+            ->paginate(5); 
+
+        // Transform the paginated data
+        $data = $preOrders->getCollection()->map(function ($preOrder) {
+            return [
+                'pre_order_id' => $preOrder->id,
+                'vendor_name'  => $preOrder->user->first_name . ' ' . $preOrder->user->last_name,
+                'product_name' => $preOrder->product->name,
+                'quantity'     => $preOrder->qty,
+                'location'     => $preOrder->location,
+                'note'         => $preOrder->note ?? 'No notes',
+                'delivery_date'=> $preOrder->delivery_date->format('Y-m-d'),
+                'status'       => ucfirst($preOrder->status),  
+            ];
+        })->values();
+
+        return response()->json([
+            'success' => true,
+            'meta' => [
+                'current_page' => $preOrders->currentPage(),
+                'last_page'    => $preOrders->lastPage(),
+                'per_page'     => $preOrders->perPage(),
+                'total'        => $preOrders->total(),
+            ],
+            'data' => $data,
+        ], 200);
+    }
+
+
+    public function destroy($preOrderId){
+        $preOrder = PreOrder::findOrFail($preOrderId);
+        $preOrder->delete();
+        
+
     }
 }
