@@ -15,6 +15,9 @@ class PreOrder extends Model
         'note','delivery_date','recurring_schedule',
         'status'
     ];
+    protected $casts = [
+    'delivery_date' => 'datetime',
+    ];
 
     public function user(){
         return $this->belongsTo(User::class, 'user_id');

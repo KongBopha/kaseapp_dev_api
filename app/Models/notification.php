@@ -8,24 +8,28 @@ class Notification extends Model
 {
     //
     protected $fillable = [
-        'actor_id', 'user_id', 'type', 'reference_id','pre_order_id',
+        'vendor_id', 'farm_id', 'type','recipient_id' ,'reference_id','pre_order_id',
         'message','read_status'
     ];
 
-    public function actor()
-    {
-        return $this->belongsTo(User::class, 'actor_id');
+    public function recipient(){
+        return $this->belongsTo(User::class, 'recipient_id');
     }
-    public function user()
+    public function vendor()
     {
-        return $this->belongsTo(User::class, 'user_id');
+        return $this->belongsTo(Vendor::class, 'vendor_id');
+    }
+    public function farm()
+    {
+        return $this->belongsTo(Farm::class, 'farm_id');
     }
     public function preOrder()
     {
         return $this->belongsTo(PreOrder::class, 'pre_order_id');
     }
     public function reference(){
-        return $this->belongsTo(OrderDetails::class, 'reference_id');
+        return $this->belongsTo(OrderDetail::class, 'reference_id');
 
     }
 }
+

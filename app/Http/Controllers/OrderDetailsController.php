@@ -5,124 +5,171 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use App\Models\OrderDetail;
 use App\Models\PreOrder;
+use App\Models\User;
 use App\Services\NotificationService;
+use App\Services\PreOrderService;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB; 
 
 class OrderDetailsController extends Controller
 {
     protected $notificationService;
+    protected $preOrderService;
 
-    public function __construct(NotificationService $notificationService)
+    public function __construct(NotificationService $notificationService,PreOrderService $preOrderService)
     {
         $this->notificationService = $notificationService;
+        $this->preOrderService = $preOrderService;
+
     }
 
-    // GET all order items
-    public function index()
+    /**
+     * Farmer submits an offer
+     */
+    public function store(Request $request, $preOrderId)
     {
-        $orders = OrderDetail::with(['preorder','farm','product','crop'])->get();
-        return response()->json(['success'=>true,'data'=>$orders]);
-    }
+        $user = Auth::user();
+        if ($user->role !== 'farmer') {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
+        }
 
-    // GET single order item
-    public function show($id)
-    {
-        $orderDetail = OrderDetail::with(['preorder','farm','product','crop'])->findOrFail($id);
-        return response()->json(['success'=>true,'data'=>$orderDetail]);
-    }
+        $preOrder = PreOrder::findOrFail($preOrderId);
+        $farm = $user->farms()->first();
 
-    // CREATE order item (farm offer)
-    public function store(Request $request)
-    {
-        $validated = $request->validate([
-            'pre_order_id' => 'required|exists:pre_orders,id',
-            'farm_id' => 'required|exists:farms,id',
-            'product_id' => 'required|exists:products,id',
-            'crop_id' => 'nullable|exists:crops,id',
-            'fulfilled_qty' => 'required|numeric|min:0',
-            'description' => 'nullable|string|max:255',
+        if (!$farm) {
+            return response()->json(['success' => false, 'message' => 'You do not own a farm'], 403);
+        }
+
+        // Prevent duplicate offer
+        if (OrderDetail::where('pre_order_id', $preOrder->id)->where('farm_id', $farm->id)->exists()) {
+            return response()->json(['success' => false, 'message' => 'You have already offered.'], 400);
+        }
+
+        $data = $request->validate([
+            'fulfilled_qty' => 'required|numeric|min:0.01',
+            'offer_status'  => 'required|in:accepted,rejected',
+            'description'   => 'nullable|string',
         ]);
 
-        $orderItem = OrderDetail::create(array_merge($validated, ['offer_status'=>'pending']));
+        $data['pre_order_id'] = $preOrder->id;
+        $data['farm_id'] = $farm->id;
 
-        $preOrder = PreOrder::findOrFail($request->pre_order_id);
+        try {
+            DB::beginTransaction();
 
-        $this->notificationService->sendToUser(
-            $request->farm_id,
-            $preOrder->user_id,
-            'offer',
-            "Farm ID {$request->farm_id} offers {$request->fulfilled_qty} units for pre-order ID {$request->pre_order_id}",
-            $request->pre_order_id,
-            $orderItem->id
-        );
+            //  Create the offer
+            $orderDetail = OrderDetail::create($data);
 
-        return response()->json(['success'=>true,'message'=>'Offer created and vendor notified','data'=>$orderItem],201);
+            // Notify the vendor (recipient_id = vendor's user ID)
+            $notification = $this->notificationService->notifyVendor($orderDetail);
+            if (!$notification) {
+                throw new \Exception("Failed to create notification for vendor.");
+            }
+
+            DB::commit();
+
+            return response()->json(['success' => true, 'data' => $orderDetail]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
     }
 
-    // UPDATE order item
-    public function update(Request $request, $id)
-    {
-        $orderDetail = OrderDetail::findOrFail($id);
-        $validated = $request->validate([
-            'fulfilled_qty' => 'sometimes|numeric|min:0',
-            'description' => 'nullable|string|max:255',
-            'offer_status' => 'nullable|in:pending,accepted,rejected,confirmed,cancelled'
-        ]);
-
-        $orderDetail->update($validated);
-        return response()->json(['success'=>true,'message'=>'Order item updated','data'=>$orderDetail]);
-    }
-
-    // DELETE order item
-    public function destroy($id)
-    {
-        $orderDetail = OrderDetail::findOrFail($id);
-        $orderDetail->delete();
-        return response()->json(['success'=>true,'message'=>'Order item deleted']);
-    }
-
-    // Confirm offer by vendor
+    /**
+     * Vendor confirms or rejects an offer
+     */
     public function confirmOffer(Request $request, $id)
     {
         $user = Auth::user();
         if ($user->role !== 'vendor') {
-            return response()->json(['success' => false, 'message' => 'Only vendors can confirm offers.'], 403);
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
         }
 
-        $orderItem = OrderDetail::findOrFail($id);
-        $orderItem->update(['offer_status' => 'accepted']);
+        $orderDetail = OrderDetail::with('preOrder')->findOrFail($id);
 
-        // Update pre-order status
-        app(\App\Http\Controllers\PreOrderController::class)
-            ->updatePreOrderStatus($orderItem->pre_order_id);
+        if ($orderDetail->preOrder->user_id !== $user->id) {
+            return response()->json(['success' => false, 'message' => 'Not your pre-order'], 403);
+        }
+
+        if (in_array($orderDetail->offer_status, ['confirmed', 'rejected'])) {
+            return response()->json(['success' => false, 'message' => 'Offer already handled'], 400);
+        }
+
+        $data = $request->validate([
+            'offer_status' => 'required|in:confirmed,rejected',
+        ]);
+
+        try {
+            DB::beginTransaction();
+
+            // Update the offer
+            $orderDetail->update($data);
+
+            // Update pre-order status based on all confirmed offers
+            $prorder_status =$this->preOrderService->updatePreOrderStatus($orderDetail->pre_order_id);
+            if(!$prorder_status){
+                throw new \Exception("Failed to update status in pre order");
+
+            }
+            //  Notify the farmer (recipient_id = farmer's user ID)
+            $notification = $this->notificationService->notifyFarm($orderDetail);
+            if (!$notification) {
+                throw new \Exception("Failed to create notification for farmer.");
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => "Offer {$data['offer_status']} successfully",
+                'data'    => $orderDetail
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * List order details for the authenticated vendor view
+     */
+    public function index(Request $request)
+    {
+        $vendor = auth()->user(); // vendor
+
+        $orderDetails = OrderDetail::with(['farm', 'preOrder.product'])
+            ->where('offer_status', 'accepted')
+            ->whereHas('preOrder', function ($query) use ($vendor) {
+                $query->where('user_id', $vendor->id); // only this vendor's pre-orders
+            })
+            ->orderBy('created_at', 'desc')
+            ->paginate(5);
+
+        $data = $orderDetails->getCollection()->map(function ($orderDetail) {
+            $preOrder = $orderDetail->preOrder;
+            return [
+                'pre_order_id' => $preOrder->id,
+                'farm_name'  => $orderDetail->farm->name ?? 'Unknown', 
+                'product_name' => $preOrder->product->name,
+                'requested_qty'=> $preOrder->qty,
+                'fulfilled_qty'=> $orderDetail->fulfilled_qty,
+                'location'     => $preOrder->location,
+                'note'         => $preOrder->note ?? 'No notes',
+                'delivery_date'=> $preOrder->delivery_date->format('Y-m-d'),
+                'offer_status' => $orderDetail->offer_status,
+            ];
+        })->values();
 
         return response()->json([
             'success' => true,
-            'message' => 'Offer confirmed by vendor, pre-order status updated',
-            'data' => $orderItem
+            'meta' => [
+                'current_page' => $orderDetails->currentPage(),
+                'last_page'    => $orderDetails->lastPage(),
+                'per_page'     => $orderDetails->perPage(),
+                'total'        => $orderDetails->total(),
+            ],
+            'data' => $data,
         ]);
     }
 
-    // Cancel offer
-    public function cancelOffer(Request $request, $id)
-    {
-        $user = Auth::user();
-        if ($user->role !== 'vendor') {
-            return response()->json(['success' => false, 'message' => 'Only vendors can cancel offers.'], 403);
-        }
-
-        $orderItem = OrderDetail::findOrFail($id);
-        $orderItem->update(['offer_status' => 'cancelled']);
-
-        $this->notificationService->sendToUser(
-            $orderItem->farm_id,
-            $orderItem->preorder->user_id,
-            'offer_cancelled',
-            "Offer ID {$orderItem->id} has been cancelled",
-            $orderItem->pre_order_id,
-            $orderItem->id
-        );
-
-        return response()->json(['success'=>true,'message'=>'Offer cancelled and notification sent','data'=>$orderItem]);
-    }
 }
