@@ -23,6 +23,12 @@ class NotificationController extends Controller
     {
         $user = Auth::user();
 
+        if (!$user) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Unauthorized. Please log in again.',
+        ], 401);
+        }
         $query = Notification::with([
             'preOrder.product:id,name',
             'vendor:id,name',
@@ -43,7 +49,7 @@ class NotificationController extends Controller
                 NotificationTypeEnum::ACCEPTANCE->value,
                 NotificationTypeEnum::REJECTION->value,
             ]);
-        } else {
+        } elseif($user->role==='consumer') {
             return response()->json([
                 'success' => true,
                 'data'    => [],

@@ -3,28 +3,25 @@
 namespace App\Http\Middleware;
 
 use Closure;
+use Illuminate\Auth\AuthenticationException;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
 
 class Authenticate
 {
-    /**
-     * an incoming request.
-     */
-
-    protected function redirectTo($request): ?string
+    public function handle(Request $request, Closure $next, ...$guards)
     {
-        if (! $request->expectsJson()) {
-            return route('login');
+        if (!auth()->check()) {
+            return $this->unauthenticated($request);
         }
 
-        return null;
-    }
-    protected function unauthenticated($request, AuthenticationException $exception)
-    {
-        return $request->expectsJson()
-                ? response()->json(['message' => $exception->getMessage()], 401)
-                : redirect()->guest(route('login'));
+        return $next($request);
     }
 
+    protected function unauthenticated($request)
+    {
+        return response()->json([
+            'success' => false,
+            'message' => 'Unauthenticated.',
+        ], 401);
+    }
 }

@@ -5,6 +5,8 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use App\Models\Product;
 use Illuminate\Support\Facades\Validator;
+use App\Services\FileUploadService;
+
 
 class ProductController extends Controller
 {
@@ -79,7 +81,7 @@ class ProductController extends Controller
         }
 
         $validator = Validator::make($request->all(), [
-            'owner_id' => 'required|integer|exists:users,id',
+            'owner_id' => 'sometimes|integer|exists:users,id',
             'name' => 'required|string|max:255',
             'description' => 'nullable|string',
             'unit' => 'required|string|max:50',
@@ -102,6 +104,47 @@ class ProductController extends Controller
             'data' => $product
         ]);
     }
+    public function updateWithFile(Request $request, $id, FileUploadService $uploadService)
+    {
+        $product = Product::find($id);
+        if (!$product) {
+            return response()->json(['success' => false, 'message' => 'Product not found'], 404);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'owner_id' => 'sometimes|integer|exists:users,id',
+            'name' => 'sometimes|string|max:255',
+            'description' => 'nullable|string',
+            'unit' => 'sometimes|string|max:50',
+            'image' => 'sometimes|image|mimes:jpg,png,jpeg|max:2048',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation errors',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $validated = $validator->validated();
+
+        if ($request->hasFile('image')) {
+            $validated['image'] = $uploadService->uploadFile(
+                $request->file('image'),
+                'product_images'
+            );
+        }
+
+        $product->update($validated);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Product updated successfully',
+            'data' => $product->fresh()
+        ]);
+    }
+
 
     public function destroy($id)
     {

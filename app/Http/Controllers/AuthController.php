@@ -11,6 +11,8 @@ use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Validation\Rules\Password;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
+use App\Services\FileUploadService;
+
 
 
 class AuthController extends Controller
@@ -152,6 +154,15 @@ public function login(Request $request)
     public function me(Request $request)
     {
         $user = Auth::user();
+
+        If(!$user){
+            return response()->json([ 
+            'success' => true,
+            'name' => 'Guest User',
+            'email' => null,
+            'role' => 'consumer'
+            ], 200);
+        }
         return response()->json([
             'success' => true,
             'name' => $user->first_name . ' ' . $user->last_name,
@@ -160,24 +171,97 @@ public function login(Request $request)
         ], 200); 
     }
 
-    // logout user
-    public function logout(Request $request)
-    {
-        $request->user()->currentAccessToken()->delete();
+    // user profile photo
+    
+    public function updateProfile(Request $request, FileUploadService $uploadService){
+        $user = auth()->user();
+
+        $validator = Validator::make($request->all(),[
+            'first_name' => 'sometimes|string|max:255',
+            'last_name' => 'sometimes|string|max:255',
+            'sex' => 'sometimes|in:male,female,other',
+            'address' => 'sometimes|string|max:255',
+            'profile_photo' => 'sometimes|image|mimes:jpg,png,jpeg|max:2048',
+        ]);
+
+        if ($validator->fails()) {   
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation Failed',
+                'errors'  => $validator->errors()
+            ], 422);
+        }
+        $validated = $validator->validated();
+
+        if ($request->hasFile('profile_photo')) {
+            $validated['profile_url'] = $uploadService->uploadFile($request->file('profile_photo'), 'profile_photos');
+        }
+
+        $user->update($validated);
 
         return response()->json([
             'success' => true,
-            'message' => 'Logged out successfully'
+            'message' => 'Profile updated successfully',
+            'user' => $user
         ], 200);
+
+    }
+
+    // logout user
+    public function logout(Request $request)
+    {
+        $user = $request->user();
+
+        If($user){
+            $currentToken ->user()->currentAccessToken();
+            if($currentToken){
+                $currentToken->delete();
+            }
+        
+            return response()->json([
+            'success' => true,
+            'message' => 'Logged out successfully',
+            'user' => null // explicitly return null user
+        ], 200);
+        }
+        
+        return response()->json([
+        'success' => true,
+        'message' => 'No active session',
+        'user' => null
+    ], 200);
     }
 
     // refresh token 
 
-    public function refresh(Request $request){
+    public function refreshToken(Request $request)
+    {
+        $token = $request->bearerToken(); // Get token from header
 
-        $user= Auth::user();
-        $request->user()->currentAccessToken()->delete();
-        $newToken = $user->createToken('auth_token')->plainTextToken;
+        if (!$token) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No token provided',
+                'access_token' => null
+            ], 401);
+        }
+
+        // Find token in database
+        $accessToken = $request->user()?->currentAccessToken();
+
+        if (!$accessToken) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Invalid token',
+                'access_token' => null
+            ], 401);
+        }
+
+        // Delete old token
+        $accessToken->delete();
+
+        // Create new token
+        $newToken = $request->user()->createToken('auth_token')->plainTextToken;
 
         return response()->json([
             'success' => true,
@@ -185,6 +269,8 @@ public function login(Request $request)
             'access_token' => $newToken
         ], 200);
     }
+
+
 
     // reset password
     public function changePassword(Request $request)
@@ -260,14 +346,22 @@ public function login(Request $request)
 
         $validated = $validator->validated();
 
+        //handle file upload
+        if ($request->hasFile('cover')) {
+            $data['cover'] = $request->file('cover')->store('covers', 'public');
+        }
+        if ($request->hasFile('logo')) {
+            $data['logo'] = $request->file('logo')->store('logos', 'public');
+        }
+
         // create farmer profile
         $farmer = Farm::create([
             'owner_id' => $user->id,
             'name' => $validated['name'],
             'address' => $validated['address'],
             'description' => $validated['about'] ?? null,
-            'cover' => $validated['cover'] ?? null,
-            'logo' => $validated['logo'] ?? null,
+            'cover' => $data['cover'] ?? null,
+            'logo' => $data['logo'] ?? null,
         ]);
 
         $user->update([
@@ -277,10 +371,9 @@ public function login(Request $request)
         return response()->json([
             'success' => true,
             'message' => 'Upgraded to farmer successfully',
-            'farmer' => $farmer,
+            'farmer'    => $farmer,
             'user' => $user,
-            'role' => $user->role
-        ], 201);
+            ], 201);
     }
 
     // upgrade to vendor
@@ -310,7 +403,7 @@ public function login(Request $request)
             'vendor_type' => 'required|in:retailer,wholesaler',
             'address' => 'nullable|string|max:255',
             'about' => 'nullable|string',
-            'logo' => 'nullable|image|max:2048',
+            'logo' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
         ]);
 
         if ($validator->fails()) {
@@ -320,7 +413,12 @@ public function login(Request $request)
             ], 422);
         }
 
-        $validated = $validator->validated();
+        $data = $validator->validated();
+
+          // Handle file upload
+        if ($request->hasFile('logo')) {
+            $data['logo'] = $request->file('logo')->store('logos', 'public');
+        }
 
         // create vendor profile
         $vendor = Vendor::create([
@@ -329,7 +427,7 @@ public function login(Request $request)
             'vendor_type' => $validated['vendor_type'],
             'address' => $validated['address'] ?? null,
             'about' => $validated['about'] ?? null,
-            'logo' => $validated['logo'] ?? null,
+            'logo' => $data['logo'] ?? null,
         ]);
 
         $user->update([
@@ -339,9 +437,8 @@ public function login(Request $request)
         return response()->json([
             'success' => true,
             'message' => 'Upgraded to vendor successfully',
-            'vendor' => $vendor,
+            'vendor'  =>   $vendor,
             'user' => $user,
-            'role' => $user->role
         ], 201);
     }
 }

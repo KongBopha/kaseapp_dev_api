@@ -6,10 +6,13 @@ use Illuminate\Http\Request;
 use App\Models\OrderDetail;
 use App\Models\PreOrder;
 use App\Models\User;
+use App\Models\Crop;
+use App\Models\MarketSupply;
 use App\Services\NotificationService;
 use App\Services\PreOrderService;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB; 
+
 
 class OrderDetailsController extends Controller
 {
@@ -40,7 +43,6 @@ class OrderDetailsController extends Controller
             return response()->json(['success' => false, 'message' => 'You do not own a farm'], 403);
         }
 
-        // Prevent duplicate offer
         if (OrderDetail::where('pre_order_id', $preOrder->id)->where('farm_id', $farm->id)->exists()) {
             return response()->json(['success' => false, 'message' => 'You have already offered.'], 400);
         }
@@ -105,6 +107,42 @@ class OrderDetailsController extends Controller
             // Update the offer
             $orderDetail->update($data);
 
+            // create market supply after vendor confirm
+            if($data['offer_status']==='confirmed'){
+            
+            $productId = $orderDetail->preOrder->product_id;
+
+                // assign crop simulation
+            $crop = Crop::where('farm_id',$orderDetail->farm_id)
+                        ->where('product_id', $productId)
+                        ->where('status', 0)  
+                        ->first();
+                if(!$crop){
+            throw new \Exception("No available crop for this farm and product.");
+            }
+                // 2. Update order_detail with the crop_id
+            $orderDetail->crop_id = $crop->id;
+            $orderDetail->save();
+
+                $marketSupply = MarketSupply::firstOrCreate(
+                    [
+                        'farm_id'   =>$orderDetail->farm_id,
+                        'crop_id'   =>$crop->id ,
+                        'product_id'=>$productId
+                    ],  
+                    [
+                        'available_qty'     =>    0,
+                        'unit'              => $crop->unit ?? 'kg',
+                        'availability'      => $crop->harvest_date,
+                    ]
+                );
+
+                //calculate remaining quantity
+                $remainingQty =  $crop->qty - $orderDetail->fulfilled_qty;
+                $marketSupply->available_qty= max(0, $remainingQty);
+                $marketSupply->save();
+            }
+
             // Update pre-order status based on all confirmed offers
             $prorder_status =$this->preOrderService->updatePreOrderStatus($orderDetail->pre_order_id);
             if(!$prorder_status){
@@ -137,6 +175,27 @@ class OrderDetailsController extends Controller
     {
         $vendor = auth()->user(); // vendor
 
+        if(!$vendor) {
+            return response()->json([
+                'success' => true,
+                'message' => 'No active session',
+                'user' => null
+            ], 200);
+        }
+
+            if($vendor->role!=='vendor'){
+            return response()->json([
+                'success'=>true,
+                'meta'=>[
+                    'current_page'=>1,
+                    'last_page'    => 1,
+                    'per_page'     => 5,
+                    'total'        => 0,
+
+                ],
+                'data'=>[],
+            ], 200);
+        }
         $orderDetails = OrderDetail::with(['farm', 'preOrder.product'])
             ->where('offer_status', 'accepted')
             ->whereHas('preOrder', function ($query) use ($vendor) {
@@ -148,6 +207,7 @@ class OrderDetailsController extends Controller
         $data = $orderDetails->getCollection()->map(function ($orderDetail) {
             $preOrder = $orderDetail->preOrder;
             return [
+                'order_detail_id' => $orderDetail->id, 
                 'pre_order_id' => $preOrder->id,
                 'farm_name'  => $orderDetail->farm->name ?? 'Unknown', 
                 'product_name' => $preOrder->product->name,
@@ -170,6 +230,8 @@ class OrderDetailsController extends Controller
             ],
             'data' => $data,
         ]);
-    }
-
+    }   
+    //**
+    // Farm reject the pre order request
+    //  */
 }

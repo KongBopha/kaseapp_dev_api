@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Models\Farm;
 use App\Models\OrderDetail;
 use App\Services\NotificationService;
+use App\Services\PreOrderService;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\DB;
@@ -18,9 +19,10 @@ class PreOrderController extends Controller
 {
     protected $notificationService;
 
-    public function __construct(NotificationService $notificationService)
+    public function __construct(NotificationService $notificationService,PreOrderService $preOrderService)
     {
         $this->notificationService = $notificationService;
+        $this->preOrderService = $preOrderService;
     }
 
     // Vendor creates a pre-order
@@ -89,7 +91,7 @@ class PreOrderController extends Controller
         // Notify farm
         $this->notificationService->notifyFarm($orderDetail);
         // Update pre_order status based on confirmed offers
-        $this->updatePreOrderStatus($orderDetail->pre_order_id);
+        $this->preOrderService->updatePreOrderStatus($orderDetail->pre_order_id);
 
         return response()->json(['success'=>true, 'message'=>'Offer processed']);
     }
@@ -121,7 +123,22 @@ class PreOrderController extends Controller
     public function index(Request $request) 
     {
         $user = auth()->user(); // farmer
+        
+    // Check for expired/invalid token
+    if (!$user) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Unauthorized. Please log in again.',
+        ], 401);
+    }
 
+    // Check if user role is farmer
+    if ($user->role !== 'farmer') {
+        return response()->json([
+            'success' => false,
+            'message' => 'Forbidden: Only farmers can access this resource.',
+        ], 403);
+    }
         $preOrders = PreOrder::with(['user', 'product'])
             ->where('status', 'pending')
             ->whereDoesntHave('orderDetails', function ($query) use ($user) {
