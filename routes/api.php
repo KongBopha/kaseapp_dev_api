@@ -10,7 +10,7 @@ use App\Services\NotificationService;
 use App\Http\Controllers\CropController;
 use App\Http\Controllers\VendorController;
 use App\Http\Controllers\FarmController;
-use App\Http\Controllers\FirebaseController;
+use App\Http\Controllers\MarketSupplyController;
 
 Route::prefix('auth')->group(function () {
     Route::post('/signup', [AuthController::class, 'register']);
@@ -21,8 +21,7 @@ Route::prefix('auth')->group(function () {
     Route::post('update-product-image/{id}', [ProductController::class, 'updateWithFile']);
     Route::delete('delete-product/{id}', [ProductController::class, 'destroy']);
     Route::post('/refresh', [AuthController::class, 'refresh']);
-
-
+    Route::get('/market-supplies/listing',[MarketSupplyController::class,'index']);
 
 });
 
@@ -46,7 +45,6 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('pre-order/listing',[PreOrderController::class,'index']);
     Route::get('order-details/listing',[OrderDetailsController::class, 'index']);
 
-
     // vendor-only routes
     Route::middleware('role:vendor')->group(function () {
        // Route::apiResource('pre-orders', PreOrderController:: class);
@@ -69,6 +67,6 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 
     // Firebase
-    Route::post('/send-fcm', [FirebaseController::class, 'testFCM']);
+    //Route::post('/send-fcm', [FirebaseController::class, 'testFCM']);
 });
 

@@ -117,14 +117,14 @@ class PreOrderController extends Controller
         $preOrder->status = $status;
         $preOrder->save();
     }
-        /**
+    /**
      * List order details for the authenticated farmer
      */
     public function index(Request $request) 
     {
         $user = auth()->user(); // farmer
         
-    // Check for expired/invalid token
+    // Check for expired/invalid token  
     if (!$user) {
         return response()->json([
             'success' => false,
@@ -133,11 +133,18 @@ class PreOrderController extends Controller
     }
 
     // Check if user role is farmer
-    if ($user->role !== 'farmer') {
+   if ($user->role !== 'farmer') {
+        // Return empty response  
         return response()->json([
-            'success' => false,
-            'message' => 'Forbidden: Only farmers can access this resource.',
-        ], 403);
+            'success' => true,
+            'meta' => [
+                'current_page' => 1,
+                'last_page'    => 1,
+                'per_page'     => 0,
+                'total'        => 0,
+            ],
+            'data' => [],
+        ], 200);
     }
         $preOrders = PreOrder::with(['user', 'product'])
             ->where('status', 'pending')

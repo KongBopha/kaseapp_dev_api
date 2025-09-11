@@ -175,27 +175,27 @@ class OrderDetailsController extends Controller
     {
         $vendor = auth()->user(); // vendor
 
-        if(!$vendor) {
+        if (!$vendor) {
             return response()->json([
-                'success' => true,
-                'message' => 'No active session',
-                'user' => null
-            ], 200);
+                'success' => false,
+                'message' => 'Unauthorized. Please log in again.',
+            ], 401);
         }
 
-            if($vendor->role!=='vendor'){
+        if(!$vendor||$vendor->role!=='vendor'){
             return response()->json([
                 'success'=>true,
                 'meta'=>[
                     'current_page'=>1,
                     'last_page'    => 1,
-                    'per_page'     => 5,
+                    'per_page'     => 0,
                     'total'        => 0,
 
                 ],
                 'data'=>[],
             ], 200);
         }
+        
         $orderDetails = OrderDetail::with(['farm', 'preOrder.product'])
             ->where('offer_status', 'accepted')
             ->whereHas('preOrder', function ($query) use ($vendor) {

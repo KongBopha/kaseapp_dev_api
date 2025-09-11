@@ -12,7 +12,7 @@ use Illuminate\Validation\Rules\Password;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
 use App\Services\FileUploadService;
-
+use Illuminate\Support\Facades\Storage;
 
 
 class AuthController extends Controller
@@ -138,7 +138,7 @@ public function login(Request $request)
     $token = $user->createToken(
         'auth_token',
         ['*'],
-        now()->addMinutes(120)
+        now()->addMinutes(5)
     )->plainTextToken;
 
     return response()->json([   
@@ -167,6 +167,7 @@ public function login(Request $request)
             'success' => true,
             'name' => $user->first_name . ' ' . $user->last_name,
             'email' => $user->email,
+            'profile_url'=> $user->profile_photo_path ? basename($user->profile_photo_path) : null,
             'role' => $user->role
         ], 200); 
     }

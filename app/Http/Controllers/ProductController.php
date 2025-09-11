@@ -164,9 +164,9 @@ class ProductController extends Controller
         ]);
     }
         // Fetch only product names
-    public function productNames()
+    public function productNames()  
     {
-        $products = Product::select('id', 'name')->get();
+        $products = Product::select('id', 'name','image')->get();
 
         return response()->json([
             'success' => true,

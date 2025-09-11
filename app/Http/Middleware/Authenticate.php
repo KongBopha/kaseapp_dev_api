@@ -3,18 +3,23 @@
 namespace App\Http\Middleware;
 
 use Closure;
-use Illuminate\Auth\AuthenticationException;
 use Illuminate\Http\Request;
+use Illuminate\Auth\AuthenticationException;
 
 class Authenticate
 {
     public function handle(Request $request, Closure $next, ...$guards)
     {
-        if (!auth()->check()) {
-            return $this->unauthenticated($request);
+        // Default to sanctum if no guard specified
+        $guards = empty($guards) ? ['sanctum'] : $guards;
+
+        foreach ($guards as $guard) {
+            if (auth()->guard($guard)->check()) {
+                return $next($request);
+            }
         }
 
-        return $next($request);
+        return $this->unauthenticated($request);
     }
 
     protected function unauthenticated($request)
