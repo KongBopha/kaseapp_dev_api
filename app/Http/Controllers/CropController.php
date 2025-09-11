@@ -46,38 +46,7 @@ class CropController extends Controller
             ->where('product_id', $request->product_id)
             ->first();
 
-        $offer_qty = OrderDetail::where('farm_id', $request->farm_id)
-            ->where('product_id', $request->product_id)
-            ->where('offer_status', 'accepted')
-            ->sum('fulfilled_qty');
-
-        if ($request->qty < $offer_qty) {
-            return response()->json([
-                'success' => false,
-                'message' => "Crop quantity must be at least {$offer_qty} to fulfill confirmed orders."
-            ], 400);
-        }
-
         $crop = Crop::create($data);
-
-        OrderDetail::where('farm_id', $request->farm_id)
-            ->where('product_id', $request->product_id)
-            ->where('offer_status', 'accepted')
-            ->update(['crop_id' => $crop->id]);
-
-        $product = Product::find($request->product_id);
-        $remaining_qty = $request->qty - $offer_qty;
-
-        if ($remaining_qty > 0) {
-            MarketSupply::create([
-                'farm_id' => $request->farm_id,
-                'crop_id' => $crop->id,
-                'product_id' => $request->product_id,
-                'available_qty' => $remaining_qty,
-                'unit' => $product->unit ?? 'kg',
-                'availability' => $request->harvest_date,
-            ]);
-        }
 
         return response()->json([
             'success' => true,

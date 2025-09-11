@@ -7,12 +7,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 
 class OrderDetail extends Model
 {
-    //
-    const STATUS_PENDING = 'pending';
-    const STATUS_ACCEPTED = 'accepted';
-    const STATUS_REJECTED = 'rejected';
-    const STATUS_CONFIRMED = 'confirmed';
-    const STATUS_CANCELLED = 'cancelled';
+
     
      use HasFactory;
     protected $fillable = [

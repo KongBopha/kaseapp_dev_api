@@ -19,14 +19,14 @@ class CheckRole
     {
         $user = Auth::user();
 
-        if (! $user) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Unauthorized, please login first'
-            ], 401);
+        // if user is null, define as consumer
+        $currentRole = $user?->role ?? 'consumer';
+
+        if($role === 'consumer'){
+            return $next($request);
         }
 
-        if ($user->role !== $role) {
+        if ($currentRole !== $role) {
             $message = match ($role) {
                 'vendor' => 'Please register as a vendor first to access this feature.',
                 'farmer' => 'Please register as a farmer first to access this feature.',
