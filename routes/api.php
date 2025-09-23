@@ -16,12 +16,15 @@ Route::prefix('auth')->group(function () {
     Route::post('/signup', [AuthController::class, 'register']);
     Route::post('/login', [AuthController::class, 'login']);
     Route::get('get-products', [ProductController::class, 'index']);
-    Route::get('get-products/byname', [ProductController::class, 'productNames']);
+    Route::get('/products', [ProductController::class, 'productNames']);
     Route::patch('update-product/{id}', [ProductController::class, 'update']);
     Route::post('update-product-image/{id}', [ProductController::class, 'updateWithFile']);
     Route::delete('delete-product/{id}', [ProductController::class, 'destroy']);
-    Route::post('/refresh', [AuthController::class, 'refresh']);
+    Route::post('/refresh', [AuthController::class, 'refreshToken']);   
     Route::get('/market-supplies/listing',[MarketSupplyController::class,'index']);
+    Route::get('/market-trend/listing',[PreOrderController::class,'trendingProducts']);
+ 
+
 
 });
 
@@ -34,6 +37,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('auth/upgrade-to-farmer', [AuthController::class, 'upgradeToFarmer']);
     Route::post('auth/upgrade-to-vendor', [AuthController::class, 'upgradeToVendor']);
     Route::post('auth/update-profile', [AuthController::class, 'updateProfile']);
+    Route::get('/showProfile/{id}', [AuthController::class, 'showProfile']);
 
 
     // notification farmer and vendor
@@ -42,17 +46,24 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/unread', [NotificationController::class, 'unreadCount']); 
         Route::put('{id}/mark-read', [NotificationController::class, 'markRead']); 
     });
-    Route::get('pre-order/listing',[PreOrderController::class,'index']);
-    Route::get('order-details/listing',[OrderDetailsController::class, 'index']);
+    Route::get('pre-order/listing',[PreOrderController::class,'listPreOrders']);
+    //Route::get('/get/pre-orders', [PreOrderController::class, 'listPreOrders']);
+    Route::get('/filter/order-details', [OrderDetailsController::class, 'filterOrderDetails']);
+
 
     // vendor-only routes
     Route::middleware('role:vendor')->group(function () {
-       // Route::apiResource('pre-orders', PreOrderController:: class);
+
         Route::get('pre-orders/user/{user_id}', [PreOrderController::class, 'getByUser']);
         Route::post('pre-orders',[PreOrderController::class, 'store']);
         Route::put('pre-orders/{id}/status', [PreOrderController::class, 'updatePreOrderStatus']);
         Route::put('order-details/{id}/offer-status', [OrderDetailsController::class, 'confirmOffer']);
-        Route::post('update/vendor-profile', [VendorController::class, 'updateVendorProfile']);
+        Route::post('update/vendor-profile', [VendorController::class, 'updateVendorProfile']);    
+        Route::get('order-details/listing',[OrderDetailsController::class, 'index']);
+        Route::delete('delete/pre-orders/{id}', [PreOrderController::class, 'destroy']);
+        Route::put('update/pre-orders/{id}', [PreOrderController::class, 'update']);
+        Route::get('pre-orders/list-item', [PreOrderController::class, 'index']);
+
     });
 
     // farmer-only routes
@@ -63,6 +74,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::put('products/{id}', [ProductController::class, 'update']);
         Route::delete('products/{id}', [ProductController::class, 'destroy']);
         Route::post('update/farm-profile', [FarmController::class, 'updateFarmProfile']);
+ 
 
     });
 

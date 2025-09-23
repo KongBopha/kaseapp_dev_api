@@ -8,25 +8,20 @@ use Illuminate\Auth\AuthenticationException;
 
 class Authenticate
 {
-    public function handle(Request $request, Closure $next, ...$guards)
+protected function unauthenticated($request, array $guards)
     {
-        // Default to sanctum if no guard specified
-        $guards = empty($guards) ? ['sanctum'] : $guards;
-
-        foreach ($guards as $guard) {
-            if (auth()->guard($guard)->check()) {
-                return $next($request);
-            }
-        }
-
-        return $this->unauthenticated($request);
+        throw new \Illuminate\Auth\AuthenticationException(
+            'Unauthenticated.',
+            $guards,
+            $this->redirectTo($request)
+        );
     }
 
-    protected function unauthenticated($request)
-    {
-        return response()->json([
-            'success' => false,
-            'message' => 'Unauthenticated.',
-        ], 401);
+protected function redirectTo($request)
+{
+    if (! $request->expectsJson()) {
+        return route('login');
     }
+}
+
 }

@@ -164,9 +164,14 @@ class ProductController extends Controller
         ]);
     }
         // Fetch only product names
-    public function productNames()  
+    public function productNames(Request $request)
     {
-        $products = Product::select('id', 'name','image')->get();
+        $query = $request->query('q');  
+        $products = $query ? Product::where('name', 'LIKE', "%{$query}%")
+                    ->select('id', 'name', 'image')
+                    ->limit(10)
+                    ->get()
+                : [];
 
         return response()->json([
             'success' => true,

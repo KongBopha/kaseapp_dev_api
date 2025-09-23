@@ -138,7 +138,7 @@ public function login(Request $request)
     $token = $user->createToken(
         'auth_token',
         ['*'],
-        now()->addMinutes(5)
+        now()->addMinutes(60)
     )->plainTextToken;
 
     return response()->json([   
@@ -159,17 +159,13 @@ public function login(Request $request)
             return response()->json([ 
             'success' => true,
             'name' => 'Guest User',
-            'email' => null,
             'role' => 'consumer'
             ], 200);
         }
         return response()->json([
             'success' => true,
-            'name' => $user->first_name . ' ' . $user->last_name,
-            'email' => $user->email,
-            'profile_url'=> $user->profile_photo_path ? basename($user->profile_photo_path) : null,
-            'role' => $user->role
-        ], 200); 
+            'user' => $user
+        ]);
     }
 
     // user profile photo
@@ -442,4 +438,63 @@ public function login(Request $request)
             'user' => $user,
         ], 201);
     }
+    // view user profile
+
+public function showProfile($id)
+{
+    $user = User::with(['farms', 'vendors'])->find($id);
+
+    if (!$user) {
+        return response()->json([
+            'success' => false,
+            'message' => 'User not found'
+        ], 404);
+    }
+
+    // Base user info
+    $profile = [
+        'id'          => $user->id,
+        'first_name'  => $user->first_name,
+        'last_name'   => $user->last_name,
+        'name'        => $user->first_name . ' ' . $user->last_name,
+        'email'       => $user->email,
+        'phone'       => $user->phone,
+        'role'        => $user->role,
+        'profile_url' => $user->profile_url,
+    ];
+
+    if ($user->role === 'farmer' && $user->farms->first()) {
+        $farm = $user->farms->first();
+        $profile['farm'] = [
+            'id'      => $farm->id,
+            'name'    => $farm->name,
+            'address' => $farm->address,
+            'about'   => $farm->about,
+            'status'  => $farm->status,
+            'logo'    => $farm->logo,
+            'cover'   => $farm->cover,
+        ];
+    }
+
+    if ($user->role === 'vendor' && $user->vendors->first()) {
+        $vendor = $user->vendors->first();
+        $profile['vendor'] = [
+            'id'          => $vendor->id,
+            'name'        => $vendor->name,
+            'vendor_type' => $vendor->vendor_type,
+            'address'     => $vendor->address,
+            'about'       => $vendor->about,
+            'logo'        => $vendor->logo,
+        ];
+    }
+
+    return response()->json([
+        'success' => true,
+        'data'    => $profile
+    ]);
+}
+
+
+
+
 }

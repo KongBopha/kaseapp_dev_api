@@ -85,6 +85,12 @@ class NotificationController extends Controller
     public function unreadCount()
     {
         $user = Auth::user();
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized. Please log in again.',
+            ], 401);
+        }
 
         $count = Notification::where('recipient_id', $user->id)
             ->where('read_status', false)
@@ -94,7 +100,8 @@ class NotificationController extends Controller
             'success' => true,
             'unread_count' => $count,
         ]);
-    }
+}
+
 
     public function markRead($id)
     {
