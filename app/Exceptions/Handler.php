@@ -7,16 +7,12 @@ use Exception;
 class Handler extends Exception
 {
     //
-    public function render($request, Throwable $e)
+public function render($request, Throwable $exception)
 {
-    if ($request->expectsJson()) {
-        return response()->json([
-            'success' => false,
-            'message' => $e->getMessage(),
-        ], $this->isHttpException($e) ? $e->getStatusCode() : 500);
+    if ($exception instanceof \Illuminate\Auth\AuthenticationException) {
+        return response()->json(['message' => 'Unauthenticated'], 401);
     }
-
-    return parent::render($request, $e);
+    return parent::render($request, $exception);
 }
 
-}
+} 

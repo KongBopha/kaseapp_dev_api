@@ -39,7 +39,7 @@ class User extends Authenticatable
     {
         return $this->hasMany(Farm::class, 'owner_id');
     }
-
+    
     // A user can have multiple vendors (if role = vendor)
     public function vendors()
     {
