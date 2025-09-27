@@ -7,6 +7,7 @@ use App\Models\OrderDetail;
 use App\Models\PreOrder;
 use App\Models\User;
 use App\Models\Crop;
+use App\Models\Farm;
 use App\Models\MarketSupply;
 use App\Services\NotificationService;
 use App\Services\PreOrderService;
@@ -209,6 +210,7 @@ class OrderDetailsController extends Controller
             return [
                 'order_detail_id' => $orderDetail->id, 
                 'pre_order_id' => $preOrder->id,
+                'user_id'         => $preOrder->user_id, 
                 'farm_name'  => $orderDetail->farm->name ?? 'Unknown', 
                 'product_name' => $preOrder->product->name,
                 'requested_qty'=> $preOrder->qty,
@@ -231,101 +233,97 @@ class OrderDetailsController extends Controller
             'data' => $data,
         ]);
     }   
-    public function filterOrderDetails(Request $request)
-    {
-        $user = auth()->user();
+public function filterOrderDetails(Request $request)
+{
+    $user = auth()->user();
 
-        if (!$user) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Unauthorized',
-            ], 403);
-        }
-
-        // Define allowed offer_status for each role
-        $allowedStatuses = [
-            'farmer' => ['pending','accepted', 'rejected', 'confirmed'],
-            'vendor' => ['pending','accepted', 'confirmed', 'rejected'],
-        ];
-
-        $role = $user->role;
-
-        if (!isset($allowedStatuses[$role])) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Role not supported',
-            ], 403);
-        }
-
-        $inputStatus = $request->input('offer_status');
-
-        // Validate status
-        if ($inputStatus && !in_array($inputStatus, $allowedStatuses[$role])) {
-            return response()->json([
-                'success' => false,
-                'message' => "Invalid status for your role"
-            ], 400);
-        }
-
-        // Build query
-        $query = OrderDetail::with(['preOrder.product', 'farm']);
-
-        if ($role === 'farmer') {
-            $farm = $user->farms()->first();
-            if (!$farm) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'You do not have a farm assigned.',
-                ], 400);
-            }
-            $query->where('farm_id', $farm->id);
-        } elseif ($role === 'vendor') {
-            $query->whereHas('preOrder', function ($q) use ($user) {
-                $q->where('user_id', $user->id);
-            });
-        }
-
-        if ($inputStatus) {
-            $query->where('offer_status', $inputStatus);
-        }
-
-        // Paginate
-        $orderDetails = $query->orderBy('created_at', 'desc')->paginate(5);
-
-        // Map to response
-        $data = $orderDetails->getCollection()->map(function ($orderDetail) use ($role) {
-            $preOrder = $orderDetail->preOrder;
-        $name = $preOrder->user->first_name . ' ' . ($preOrder->user->last_name ?? 'Unknown');
-
-            return [
-                'order_detail_id' => $orderDetail->id,
-                'pre_order_id' => $preOrder->id, 
-                'vendorName'   => $role === 'vendor'
-                                ? ($orderDetail->farm->name ?? 'Unknown')       
-                                : $name,
-                'product_name' => $preOrder->product->name,
-                'requested_qty' => $preOrder->qty,
-                'fulfilled_qty' => $orderDetail->fulfilled_qty,
-                'location' => $preOrder->location,
-                'note' => $preOrder->note ?? 'No notes',
-                'delivery_date' => $preOrder->delivery_date->format('Y-m-d'),
-                'offer_status' => $orderDetail->offer_status,
-            ];
-        })->values();
-
+    if (!$user) {
         return response()->json([
-            'success' => true,
-            'meta' => [
-                'current_page' => $orderDetails->currentPage(),
-                'last_page' => $orderDetails->lastPage(),
-                'per_page' => $orderDetails->perPage(),
-                'total' => $orderDetails->total(),
-            ],
-            'data' => $data,
-        ]);
+            'success' => false,
+            'message' => 'Unauthorized',
+        ], 403);
     }
 
+    // Define allowed offer_status for each role
+    $allowedStatuses = [
+        'farmer' => ['pending','accepted', 'rejected', 'confirmed'],
+        'vendor' => ['pending','accepted', 'confirmed', 'rejected'],
+    ];
 
+    $role = $user->role;
 
+    if (!isset($allowedStatuses[$role])) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Role not supported',
+        ], 403);
+    }
+
+    $inputStatus = $request->input('offer_status');
+
+    // Validate status
+    if ($inputStatus && !in_array($inputStatus, $allowedStatuses[$role])) {
+        return response()->json([
+            'success' => false,
+            'message' => "Invalid status for your role"
+        ], 400);
+    }
+
+    // Build query
+    $query = OrderDetail::with(['preOrder.product', 'farm.owner']); // load farmer's user
+
+    if ($role === 'farmer') {
+        $farm = $user->farms()->first();
+        if (!$farm) {
+            return response()->json([
+                'success' => false,
+                'message' => 'You do not have a farm assigned.',
+            ], 400);
+        }
+        $query->where('farm_id', $farm->id);
+    } elseif ($role === 'vendor') {
+        $query->whereHas('preOrder', function ($q) use ($user) {
+            $q->where('user_id', $user->id); // only pre-orders created by this vendor
+        });
+    }
+
+    if ($inputStatus) {
+        $query->where('offer_status', $inputStatus);
+    }
+
+    // Paginate
+    $orderDetails = $query->orderBy('created_at', 'desc')->paginate(5);
+
+    // Map to response
+    $data = $orderDetails->getCollection()->map(function ($orderDetail) use ($role) {
+        $preOrder = $orderDetail->preOrder;
+        $farm = $orderDetail->farm;
+        $farmerUser = $farm->owner ?? null;
+        return [
+            'order_detail_id' => $orderDetail->id,
+            'pre_order_id'   => $preOrder->id,
+            'vendorName'     => $farm->name ?? 'Unknown',          // farm name
+            'user_id'        => $farmerUser->id ?? 0,              // farmer's user ID
+            'product_name'   => $preOrder->product->name,
+            'requested_qty'  => $preOrder->qty,
+            'fulfilled_qty'  => $orderDetail->fulfilled_qty,
+            'location'       => $preOrder->location,
+            'note'           => $preOrder->note ?? 'No notes',
+            'delivery_date'  => $preOrder->delivery_date->format('Y-m-d'),
+            'offer_status'   => $orderDetail->offer_status,
+        ];
+    })->values();
+
+    return response()->json([
+        'success' => true,
+        'meta' => [
+            'current_page' => $orderDetails->currentPage(),
+            'last_page'    => $orderDetails->lastPage(),
+            'per_page'     => $orderDetails->perPage(),
+            'total'        => $orderDetails->total(),
+        ],
+        'data' => $data,
+    ]);
+}
 
 }

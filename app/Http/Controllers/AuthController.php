@@ -449,10 +449,9 @@ public function showProfile($id)
             'success' => false,
             'message' => 'User not found'
         ], 404);
-    }
+    }           
 
-    // Base user info
-    $profile = [
+     $profile = [
         'id'          => $user->id,
         'first_name'  => $user->first_name,
         'last_name'   => $user->last_name,
@@ -463,10 +462,12 @@ public function showProfile($id)
         'profile_url' => $user->profile_url,
     ];
 
-    if ($user->role === 'farmer' && $user->farms->first()) {
+    // Include farm info if user has farms
+    if ($user->farms->isNotEmpty()) {
         $farm = $user->farms->first();
         $profile['farm'] = [
             'id'      => $farm->id,
+            'owner_id' => $farm->owner_id,
             'name'    => $farm->name,
             'address' => $farm->address,
             'about'   => $farm->about,
@@ -476,7 +477,8 @@ public function showProfile($id)
         ];
     }
 
-    if ($user->role === 'vendor' && $user->vendors->first()) {
+    // Include vendor info if user has vendors
+    if ($user->vendors->isNotEmpty()) {
         $vendor = $user->vendors->first();
         $profile['vendor'] = [
             'id'          => $vendor->id,
@@ -493,8 +495,4 @@ public function showProfile($id)
         'data'    => $profile
     ]);
 }
-
-
-
-
 }
