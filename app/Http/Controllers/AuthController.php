@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\User;
+use App\Models\RoleRequest;
 use App\Models\Farm;
 use App\Models\Vendor;
 use Illuminate\Http\Request;
@@ -228,47 +229,6 @@ public function login(Request $request)
         'user' => null
     ], 200);
     }
-
-    // refresh token 
-
-    public function refreshToken(Request $request)
-    {
-        $token = $request->bearerToken(); // Get token from header
-
-        if (!$token) {
-            return response()->json([
-                'success' => false,
-                'message' => 'No token provided',
-                'access_token' => null
-            ], 401);
-        }
-
-        // Find token in database
-        $accessToken = $request->user()?->currentAccessToken();
-
-        if (!$accessToken) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Invalid token',
-                'access_token' => null
-            ], 401);
-        }
-
-        // Delete old token
-        $accessToken->delete();
-
-        // Create new token
-        $newToken = $request->user()->createToken('auth_token')->plainTextToken;
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Token refreshed successfully',
-            'access_token' => $newToken
-        ], 200);
-    }
-
-
-
     // reset password
     public function changePassword(Request $request)
     {
@@ -301,198 +261,189 @@ public function login(Request $request)
         ], 200);
     }
 
- 
-    // upgrade to farmer
-    public function upgradeToFarmer(Request $request)
-    {
-        $user = auth()->user(); // logged in user
-
-        if ($user->role === 'farmer') {
-            return response()->json([
-                'success' => false,
-                'message' => 'You are already a farmer'
-            ], 201);
-        } elseif ($user->role !== 'consumer') {
-            return response()->json([
-                'success' => false,
-                'message' => 'Only consumers can upgrade to farmers'
-            ], 403);
-        } elseif ($user->role === 'vendor') {
-            return response()->json([
-                'success' => false,
-                'message' => 'You are a vendor, you cannot upgrade to farmer'
-            ], 403);
-        }
-
-        // validate farmer registration data
-        $validator = Validator::make($request->all(), [
-            'name' => 'required|string|max:255',
-            'address' => 'nullable|string|max:255',
-            'about' => 'nullable|string|max:1000',
-            'cover' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048', 
-            'logo' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Validation failed',
-                'errors' => $validator->errors()
-            ], 422);
-        }
-
-        $validated = $validator->validated();
-
-        //handle file upload
-        if ($request->hasFile('cover')) {
-            $data['cover'] = $request->file('cover')->store('covers', 'public');
-        }
-        if ($request->hasFile('logo')) {
-            $data['logo'] = $request->file('logo')->store('logos', 'public');
-        }
-
-        // create farmer profile
-        $farmer = Farm::create([
-            'owner_id' => $user->id,
-            'name' => $validated['name'],
-            'address' => $validated['address'],
-            'description' => $validated['about'] ?? null,
-            'cover' => $data['cover'] ?? null,
-            'logo' => $data['logo'] ?? null,
-        ]);
-
-        $user->update([
-            'role' => 'farmer',
-        ]);
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Upgraded to farmer successfully',
-            'farmer'    => $farmer,
-            'user' => $user,
-            ], 201);
-    }
-
-    // upgrade to vendor
-    public function upgradeToVendor(Request $request)
-    {
-        $user = auth()->user();  
-
-        if ($user->role === 'vendor') {
-            return response()->json([
-                'success' => false,
-                'message' => 'You are already a vendor'
-            ], 400);
-        } elseif ($user->role !== 'consumer') {
-            return response()->json([
-                'success' => false,
-                'message' => 'Only consumers can upgrade to vendors'
-            ], 403);
-        } elseif ($user->role === 'farmer') {
-            return response()->json([
-                'success' => false,
-                'message' => 'You are a farmer, you cannot upgrade to vendor'
-            ], 403);
-        }
-
-        $validator = Validator::make($request->all(), [
-            'name' => 'required|string|max:255',
-            'vendor_type' => 'required|in:retailer,wholesaler',
-            'address' => 'nullable|string|max:255',
-            'about' => 'nullable|string',
-            'logo' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'errors' => $validator->errors()
-            ], 422);
-        }
-
-        $data = $validator->validated();
-
-          // Handle file upload
-        if ($request->hasFile('logo')) {
-            $data['logo'] = $request->file('logo')->store('logos', 'public');
-        }
-
-        // create vendor profile
-        $vendor = Vendor::create([
-            'owner_id' => $user->id,
-            'name' => $validated['name'],
-            'vendor_type' => $validated['vendor_type'],
-            'address' => $validated['address'] ?? null,
-            'about' => $validated['about'] ?? null,
-            'logo' => $data['logo'] ?? null,
-        ]);
-
-        $user->update([
-            'role' => 'vendor',
-        ]);
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Upgraded to vendor successfully',
-            'vendor'  =>   $vendor,
-            'user' => $user,
-        ], 201);
-    }
-    // view user profile
-
-public function showProfile($id)
+ public function upgradeToFarmer(Request $request)
 {
-    $user = User::with(['farms', 'vendors'])->find($id);
+    $user = auth()->user();
 
-    if (!$user) {
+    if (in_array($user->role, ['farmer', 'vendor'])) {
         return response()->json([
             'success' => false,
-            'message' => 'User not found'
-        ], 404);
-    }           
-
-     $profile = [
-        'id'          => $user->id,
-        'first_name'  => $user->first_name,
-        'last_name'   => $user->last_name,
-        'name'        => $user->first_name . ' ' . $user->last_name,
-        'email'       => $user->email,
-        'phone'       => $user->phone,
-        'role'        => $user->role,
-        'profile_url' => $user->profile_url,
-    ];
-
-    // Include farm info if user has farms
-    if ($user->farms->isNotEmpty()) {
-        $farm = $user->farms->first();
-        $profile['farm'] = [
-            'id'      => $farm->id,
-            'owner_id' => $farm->owner_id,
-            'name'    => $farm->name,
-            'address' => $farm->address,
-            'about'   => $farm->about,
-            'status'  => $farm->status,
-            'logo'    => $farm->logo,
-            'cover'   => $farm->cover,
-        ];
+            'message' => 'You already have a business role.'
+        ], 400);
     }
 
-    // Include vendor info if user has vendors
-    if ($user->vendors->isNotEmpty()) {
-        $vendor = $user->vendors->first();
-        $profile['vendor'] = [
-            'id'          => $vendor->id,
-            'name'        => $vendor->name,
-            'vendor_type' => $vendor->vendor_type,
-            'address'     => $vendor->address,
-            'about'       => $vendor->about,
-            'logo'        => $vendor->logo,
-        ];
+    $validator = Validator::make($request->all(), [
+        'name' => 'required|string|max:255',
+        'address' => 'nullable|string|max:255',
+        'about' => 'nullable|string|max:1000',
+    ]);
+
+    if ($validator->fails()) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Validation failed',
+            'errors'  => $validator->errors(),
+        ], 422);
     }
+
+    // Create role request
+    $roleRequest = \App\Models\RoleRequest::create([
+        'user_id' => $user->id,
+        'requested_role' => 'farmer',
+    ]);
 
     return response()->json([
         'success' => true,
-        'data'    => $profile
+        'message' => 'Farmer upgrade request submitted. Awaiting admin approval.',
+        'request' => $roleRequest
     ]);
 }
+
+public function upgradeToVendor(Request $request)
+{
+    $user = auth()->user();
+
+    if (in_array($user->role, ['farmer', 'vendor'])) {
+        return response()->json([
+            'success' => false,
+            'message' => 'You already have a vendor role.'
+        ], 400);
+    }
+
+    $validator = Validator::make($request->all(), [
+        'name' => 'required|string|max:255',
+        'vendor_type' => 'required|in:retailer,wholesaler',
+        'address' => 'nullable|string|max:255',
+        'about' => 'nullable|string|max:1000',
+    ]);
+
+    if ($validator->fails()) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Validation failed',
+            'errors'  => $validator->errors(),
+        ], 422);
+    }
+
+    // Create role request
+    $roleRequest = \App\Models\RoleRequest::create([
+        'user_id' => $user->id,
+        'requested_role' => 'vendor',
+    ]);
+
+    return response()->json([
+        'success' => true,
+        'message' => 'Vendor upgrade request submitted. Awaiting admin approval.',
+        'request' => $roleRequest
+    ]);
+}
+
+    // view user profile
+
+    public function showProfile($id)
+    {
+        $user = User::with(['farms', 'vendors'])->find($id);
+
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'User not found'
+            ], 404);
+        }           
+
+        $profile = [
+            'id'          => $user->id,
+            'first_name'  => $user->first_name,
+            'last_name'   => $user->last_name,
+            'name'        => $user->first_name . ' ' . $user->last_name,
+            'email'       => $user->email,
+            'phone'       => $user->phone,
+            'role'        => $user->role,
+            'profile_url' => $user->profile_url,
+        ];
+
+        // Include farm info if user has farms
+        if ($user->farms->isNotEmpty()) {
+            $farm = $user->farms->first();
+            $profile['farm'] = [
+                'id'      => $farm->id,
+                'owner_id' => $farm->owner_id,
+                'name'    => $farm->name,
+                'address' => $farm->address,
+                'about'   => $farm->about,
+                'status'  => $farm->status,
+                'logo'    => $farm->logo,
+                'cover'   => $farm->cover,
+            ];
+        }
+
+        // Include vendor info if user has vendors
+        if ($user->vendors->isNotEmpty()) {
+            $vendor = $user->vendors->first();
+            $profile['vendor'] = [
+                'id'          => $vendor->id,
+                'name'        => $vendor->name,
+                'vendor_type' => $vendor->vendor_type,
+                'address'     => $vendor->address,
+                'about'       => $vendor->about,
+                'logo'        => $vendor->logo,
+            ];
+        }
+
+        return response()->json([
+            'success' => true,
+            'data'    => $profile
+        ]);
+    }
+    public function approveRoleRequest($id)
+    {
+        $admin = auth()->user();
+        if ($admin->role !== 'admin') {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
+        }
+
+        $user = User::findOrFail($id);
+
+        if (!$user->requested_role) {
+            return response()->json(['success' => false, 'message' => 'No pending role request'], 400);
+        }
+
+        $user->update([
+            'role' => $user->requested_role,
+            'requested_role' => null,
+            'is_approved' => 1,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Role request approved successfully',
+            'user' => $user
+        ], 200);
+    }
+
+    public function rejectRoleRequest($id)
+    {
+        $admin = auth()->user();
+        if ($admin->role !== 'admin') {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
+        }
+
+        $user = User::findOrFail($id);
+
+        if (!$user->requested_role) {
+            return response()->json(['success' => false, 'message' => 'No pending role request'], 400);
+        }
+
+        $user->update([
+            'requested_role' => null,
+            'is_approved' => 0,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Role request rejected successfully',
+            'user' => $user
+        ], 200);
+    }
+
 }

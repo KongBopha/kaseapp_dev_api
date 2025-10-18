@@ -11,21 +11,16 @@ use App\Http\Controllers\CropController;
 use App\Http\Controllers\VendorController;
 use App\Http\Controllers\FarmController;
 use App\Http\Controllers\MarketSupplyController;
+use App\Http\Controllers\RoleRequestController;
+
 
 Route::prefix('auth')->group(function () {
     Route::post('/signup', [AuthController::class, 'register']);
     Route::post('/login', [AuthController::class, 'login']);
     Route::get('get-products', [ProductController::class, 'index']);
     Route::get('/products', [ProductController::class, 'productNames']);
-    Route::patch('update-product/{id}', [ProductController::class, 'update']);
-    Route::post('update-product-image/{id}', [ProductController::class, 'updateWithFile']);
-    Route::delete('delete-product/{id}', [ProductController::class, 'destroy']);
-    Route::post('/refresh', [AuthController::class, 'refreshToken']);   
     Route::get('/market-supplies/listing',[MarketSupplyController::class,'index']);
     Route::get('/market-trend/listing',[PreOrderController::class,'trendingProducts']);
- 
-
-
 });
 
 Route::middleware('auth:sanctum')->group(function () {
@@ -39,6 +34,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('auth/update-profile', [AuthController::class, 'updateProfile']);
     Route::get('/showProfile/{id}', [AuthController::class, 'showProfile']);
 
+    // role request 
+    Route::post('/role-request', [RoleRequestController::class, 'store']);
+    Route::get('/role-requests', [RoleRequestController::class, 'index']);
+    Route::put('/role-request/{id}', [RoleRequestController::class, 'update']);
 
     // notification farmer and vendor
     Route::prefix('notifications')->group(function () {
@@ -63,6 +62,9 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::delete('delete/pre-orders/{id}', [PreOrderController::class, 'destroy']);
         Route::put('update/pre-orders/{id}', [PreOrderController::class, 'update']);
         Route::get('pre-orders/list-item', [PreOrderController::class, 'index']);
+        Route::get('/market-supplies/listing',[MarketSupplyController::class,'index']);
+        Route::get('/market-supplies/{id}', [MarketSupplyController::class, 'show']);
+        Route::post('/pre-orders/from-surplus', [PreOrderController::class, 'storeFromSurplus']);
 
     });
 
@@ -75,7 +77,15 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::delete('products/{id}', [ProductController::class, 'destroy']);
         Route::post('update/farm-profile', [FarmController::class, 'updateFarmProfile']);
  
+    });
 
+    // admin role
+    Route::middleware('role:admin')->group(function () {
+        Route::get('/admin/role-requests', [RoleRequestController::class, 'index']);
+        Route::put('/admin/role-requests/{id}/approve', [RoleRequestController::class, 'update']);
+        Route::patch('update-product/{id}', [ProductController::class, 'update']);
+        Route::post('update-product-image/{id}', [ProductController::class, 'updateWithFile']);
+        Route::delete('delete-product/{id}', [ProductController::class, 'destroy']);
     });
 
     // Firebase

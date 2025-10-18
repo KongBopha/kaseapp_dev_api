@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Services\NotificationService;
 use App\Models\Notification;
 use App\Models\User;
+use App\Models\Vendor;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use App\Constants\NotificationTypeEnum;
@@ -18,20 +19,20 @@ class NotificationController extends Controller
         $this->notificationService = $notificationService;
     }
 
-    // Fetch notifications
     public function index()
     {
         $user = Auth::user();
 
         if (!$user) {
-        return response()->json([
-            'success' => false,
-            'message' => 'Unauthorized. Please log in again.',
-        ], 401);
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized. Please log in again.',
+            ], 401);
         }
+
         $query = Notification::with([
             'preOrder.product:id,name',
-            'vendor:id,name',
+            'preOrder.user:id,first_name,last_name,email,phone',
             'farm:id,name',
             'reference:id,fulfilled_qty,offer_status',
         ])->where('recipient_id', $user->id);
@@ -49,7 +50,7 @@ class NotificationController extends Controller
                 NotificationTypeEnum::ACCEPTANCE->value,
                 NotificationTypeEnum::REJECTION->value,
             ]);
-        } elseif($user->role==='consumer') {
+        } elseif($user->role === 'consumer') {
             return response()->json([
                 'success' => true,
                 'data'    => [],
@@ -64,7 +65,20 @@ class NotificationController extends Controller
             ->map(fn($items) => [
                 'pre_order_id'  => $items->first()->pre_order_id,
                 'product'       => $items->first()->preOrder->product ?? null,
-                'vendor'        => $items->first()->vendor,
+                'vendor'        => [
+                    'user_info' => $items->first()->preOrder->user
+                        ? [
+                            //'id'    => $items->first()->preOrder->user->id,
+                            'name'  => trim(($items->first()->preOrder->user->first_name ?? '') . ' ' . ($items->first()->preOrder->user->last_name ?? '')),
+                            //'email' => $items->first()->preOrder->user->email ?? null,
+                            'phone' => $items->first()->preOrder->user->phone ?? null,
+                        ]
+                        : null,
+                    'vendor_info' => $items->first()->preOrder->user
+                        ? Vendor::where('owner_id', $items->first()->preOrder->user->id)
+                            ->first(['id', 'name', 'address'])
+                        : null,
+                ],
                 'farm'          => $items->first()->farm,
                 'notifications' => $items->map(fn($n) => [
                     'id'          => $n->id,

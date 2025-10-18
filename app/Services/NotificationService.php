@@ -42,7 +42,7 @@ class NotificationService
                 'farm_id'      => $farm->id,
                 'pre_order_id' => $preOrder->id,
                 'type'         => NotificationTypeEnum::PRE_ORDER->value,
-                'message'      => "New pre-order: {$preOrder->qty} units of {$preOrder->product->name}",
+                'message'      => "New pre-order: {$preOrder->qty} kg of {$preOrder->product->name}",
                 'read_status'  => false,
             ]);
         }
@@ -65,9 +65,9 @@ class NotificationService
         if ($this->exists($orderDetail->pre_order_id, $vendorUserId, $type)) return null;
 
         $message = match ($orderDetail->offer_status) {
-            'accepted' => "Farm {$farm->name} accepted {$orderDetail->fulfilled_qty} units.",
+            'accepted' => "Farm {$farm->name} accepted {$orderDetail->fulfilled_qty} kg.",
             'rejected' => "Farm {$farm->name} rejected your request.",
-            default    => "Farm {$farm->name} made an offer of {$orderDetail->fulfilled_qty} units.",
+            default    => "Farm {$farm->name} made an offer of {$orderDetail->fulfilled_qty} kg.",
         };
 
         return $this->create([
@@ -100,7 +100,7 @@ class NotificationService
         if ($this->exists($orderDetail->pre_order_id, $farmerUserId, $type)) return null;
 
         $message = match ($orderDetail->offer_status) {
-            'confirmed' => "Vendor confirmed your supply of {$orderDetail->fulfilled_qty} units.",
+            'confirmed' => "Vendor confirmed your supply of {$orderDetail->fulfilled_qty} kg.",
             'rejected'  => "Vendor rejected your offer.",
             default     => "Your offer is updated.",
         };

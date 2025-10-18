@@ -4,9 +4,13 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use App\Models\PreOrder;
+use App\Models\Crop;
+use App\Models\Product;
 use App\Models\User;
 use App\Models\Farm;
 use App\Models\OrderDetail;
+use App\Models\MarketSupply;
+use Carbon\Carbon;
 use App\Services\NotificationService;
 use App\Services\PreOrderService;
 use Illuminate\Support\Facades\Auth;
@@ -42,6 +46,20 @@ class PreOrderController extends Controller
             'note_text'     => 'nullable|string',
         ]);
 
+        //validate the date
+
+        if(!empty($data['delivery_date'])){
+            $deliveryDate = Carbon::parse($data['delivery_date'])->startOfDay();
+
+        $today = Carbon::today();
+        if ($deliveryDate->lt($today)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Delivery date must be today or a future date.',
+            ], 422);
+        }
+        }
+
         $data['user_id'] = $user->id; // vendor
 
         try {
@@ -65,58 +83,7 @@ class PreOrderController extends Controller
             ], 500);
         }
     }
-
-
-    // Vendor confirms or rejects farm offer
-    public function confirmOffer(Request $request, $orderDetailId)
-    {
-        $user = Auth::user();
-        if ($user->role !== 'vendor') {
-            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
-        }
-
-        $validator = Validator::make($request->all(), [
-            'action' => 'required|in:accept,reject',
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json(['success'=>false,'errors'=>$validator->errors()],422);
-        }
-
-        $orderDetail = OrderDetail::findOrFail($orderDetailId);
-
-        $orderDetail->offer_status = $request->action === 'accept' ? 'accepted' : 'rejected';
-        $orderDetail->save();
-
-        // Notify farm
-        $this->notificationService->notifyFarm($orderDetail);
-        // Update pre_order status based on confirmed offers
-        $this->preOrderService->updatePreOrderStatus($orderDetail->pre_order_id);
-
-        return response()->json(['success'=>true, 'message'=>'Offer processed']);
-    }
-
-    // Calculate pre-order status based on confirmed offers
-    public function updatePreOrderStatus($preOrderId)
-    {
-        $preOrder = PreOrder::findOrFail($preOrderId);
-        $totalRequested = $preOrder->qty;
-
-        $totalConfirmed = OrderDetail::where('pre_order_id', $preOrderId)
-            ->where('offer_status', 'accepted')
-            ->sum('fulfilled_qty');
-
-        if ($totalConfirmed == 0) {
-            $status = 'pending';
-        } elseif ($totalConfirmed < $totalRequested) {
-            $status = 'partially_fulfilled';
-        } else {
-            $status = 'fulfilled';
-        }
-
-        $preOrder->status = $status;
-        $preOrder->save();
-    }
+ 
     /**
      * List order details for the authenticated farmer
      */
@@ -262,7 +229,7 @@ class PreOrderController extends Controller
         }
 
         // Soft delete by updating status
-        $preOrder->update(['status' => 'canceled']);
+        $preOrder->update(['status' => 'cancelled']);
 
         return response()->json(['success' => true, 'message' => 'Pre-order canceled']);
     }
@@ -288,6 +255,92 @@ class PreOrderController extends Controller
         }
 
         return response()->json(['success' => true, 'data' => $preOrder]);
+    }
+
+    public function storeFromSurplus(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'user_id' => 'nullable|exists:users,id', 
+            'farm_id' => 'required|exists:farms,id',
+            'market_supply_id' => 'required|exists:market_supplies,id',
+            'quantity' => 'required|numeric|min:0',
+            'unit' => 'required|string',
+            'delivery_date' => 'required|date',
+            'location' => 'nullable|string',
+            'note' => 'nullable|string',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation error',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $data = $validator->validated();
+
+        DB::beginTransaction();
+
+        try {
+            $userId = $data['user_id'] ?? Auth::id();  
+
+            // Get farm crop linked to the market supply
+            $supply = MarketSupply::findOrFail($data['market_supply_id']);
+            $crop = Crop::findOrFail($supply->crop_id);
+
+            if ($data['quantity'] > $supply->available_qty) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Quantity exceeds available market supply',
+                ], 400);
+            }
+
+            //  Create new PreOrder for the surplus
+            $preOrder = PreOrder::create([
+                'user_id'       => $userId,  
+                'product_id'    => $crop->product_id,
+                'crop_id'       => $crop->id,
+                'qty'           => $data['quantity'],
+                'location'      => $data['location'] ?? null,
+                'note'          => $data['note'] ?? 'Surplus order',
+                'delivery_date' => $data['delivery_date'],
+                'status'        => 'pending',
+            ]);
+
+            $orderDetail = OrderDetail::create([
+                'pre_order_id'   => $preOrder->id,
+                'farm_id'        => $data['farm_id'],
+                'product_id'     => $crop->product_id,
+                'crop_id'        => $crop->id,
+                'fulfilled_qty'  => $data['quantity'],
+                'unit'           => $data['unit'],
+                'offer_status'   => 'confirmed',
+                'description'    => 'Surplus offer',
+            ]);
+
+            $supply->available_qty -= $data['quantity'];
+            $supply->save();
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Surplus order successfully created',
+                'data' => [
+                    'pre_order' => $preOrder,
+                    'order_detail' => $orderDetail,
+                    'remaining_qty' => $supply->available_qty,
+                ],
+            ]);
+
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 500);
+        }
     }
 
     public function index(Request $request)
