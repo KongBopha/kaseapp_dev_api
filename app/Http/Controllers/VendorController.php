@@ -43,7 +43,7 @@ class VendorController extends Controller
         }
 
         $validated = $validator->validated();
-
+ 
 
         if ($request->hasFile('logo')) {
             $validated['logo'] = $uploadService->uploadFile(

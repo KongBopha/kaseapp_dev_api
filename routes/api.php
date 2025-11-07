@@ -12,6 +12,8 @@ use App\Http\Controllers\VendorController;
 use App\Http\Controllers\FarmController;
 use App\Http\Controllers\MarketSupplyController;
 use App\Http\Controllers\RoleRequestController;
+use App\Http\Controllers\Auth\ResetPasswordController;
+
 
 
 Route::prefix('auth')->group(function () {
@@ -21,6 +23,9 @@ Route::prefix('auth')->group(function () {
     Route::get('/products', [ProductController::class, 'productNames']);
     Route::get('/market-supplies/listing',[MarketSupplyController::class,'index']);
     Route::get('/market-trend/listing',[PreOrderController::class,'trendingProducts']);
+    Route::post('password/forgot', [ResetPasswordController::class, 'sendResetCode']);
+    Route::post('password/verify-code', [ResetPasswordController::class, 'verifyCode']);
+    Route::post('password/reset', [ResetPasswordController::class, 'resetPassword']);
 });
 
 Route::middleware('auth:sanctum')->group(function () {
@@ -82,7 +87,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // admin role
     Route::middleware('role:admin')->group(function () {
         Route::get('/admin/role-requests', [RoleRequestController::class, 'index']);
-        Route::put('/admin/role-requests/{id}/approve', [RoleRequestController::class, 'update']);
+        Route::patch('/admin/role-requests/{id}/approve', [RoleRequestController::class, 'update']);
         Route::patch('update-product/{id}', [ProductController::class, 'update']);
         Route::post('update-product-image/{id}', [ProductController::class, 'updateWithFile']);
         Route::delete('delete-product/{id}', [ProductController::class, 'destroy']);

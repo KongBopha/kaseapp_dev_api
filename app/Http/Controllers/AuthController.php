@@ -14,6 +14,8 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
 use App\Services\FileUploadService;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Database\QueryException;
 
 
 class AuthController extends Controller
@@ -110,7 +112,7 @@ public function login(Request $request)
     }
 
     $validator = Validator::make($request->all(), [
-        'phone' => 'required|string|max:255',
+        'login' => 'required|string|max:255',
         'password' => 'required|string',
 
     ]);
@@ -126,7 +128,9 @@ public function login(Request $request)
     $validated = $validator->validated();
 
     // Find user by email OR phone
-    $user = User::where('phone', $validated['phone'])->first();
+    $user = User::where('phone', $validated['login'])
+            ->orWhere('email', $validated['login'])
+            ->first();
 
     if (!$user || !Hash::check($validated['password'], $user->password)) {
         return response()->json([
@@ -179,7 +183,7 @@ public function login(Request $request)
             'last_name' => 'sometimes|string|max:255',
             'sex' => 'sometimes|in:male,female,other',
             'address' => 'sometimes|string|max:255',
-            'profile_photo' => 'sometimes|image|mimes:jpg,png,jpeg|max:2048',
+            'profile_url' => 'sometimes|image|mimes:jpg,png,jpeg|max:2048',
         ]);
 
         if ($validator->fails()) {   
@@ -191,8 +195,8 @@ public function login(Request $request)
         }
         $validated = $validator->validated();
 
-        if ($request->hasFile('profile_photo')) {
-            $validated['profile_url'] = $uploadService->uploadFile($request->file('profile_photo'), 'profile_photos');
+        if ($request->hasFile('profile_url')) {
+            $validated['profile_url'] = $uploadService->uploadFile($request->file('profile_url'), 'profile_photos');
         }
 
         $user->update($validated);
@@ -219,7 +223,7 @@ public function login(Request $request)
             return response()->json([
             'success' => true,
             'message' => 'Logged out successfully',
-            'user' => null // explicitly return null user
+            'user' => null  
         ], 200);
         }
         
@@ -229,114 +233,71 @@ public function login(Request $request)
         'user' => null
     ], 200);
     }
-    // reset password
-    public function changePassword(Request $request)
+    public function upgradeToFarmer(Request $request)
     {
-        $validated = $request->validate([
-            'current_password' => 'required|string',
-            'new_password' => [
-                'required',
-                'string',
-                'confirmed',
-                Password::min(8)->letters()->mixedCase()->numbers()->symbols()
-            ],
-        ]);
+        $user = auth()->user();
 
-        $user = $request->user();
-
-        if (!Hash::check($validated['current_password'], $user->password)) {
+        if (in_array($user->role, ['farmer', 'vendor'])) {
             return response()->json([
                 'success' => false,
-                'message' => 'Current password does not match'
+                'message' => 'You already have a role.'
             ], 400);
         }
 
-        $user->update([
-            'password' => Hash::make($validated['new_password']),
+        $validated = $request->validate([
+            'name' => 'required|string|max:255',
+            'address' => 'nullable|string|max:255',
+            'about' => 'nullable|string|max:1000',
+            'cover' => 'nullable|string',
+            'logo' => 'nullable|string',
+        ]);
+
+        $roleRequest = RoleRequest::create([
+            'user_id' => $user->id,
+            'requested_role' => 'farmer',
+            'details' => $validated,  
+            'status' => 'pending',
         ]);
 
         return response()->json([
             'success' => true,
-            'message' => 'Password changed successfully'
-        ], 200);
+            'message' => 'Farmer upgrade request submitted. Please await approval.',
+            'request' => $roleRequest
+        ]);
     }
 
- public function upgradeToFarmer(Request $request)
-{
-    $user = auth()->user();
+    public function upgradeToVendor(Request $request)
+    {
+        $user = auth()->user();
 
-    if (in_array($user->role, ['farmer', 'vendor'])) {
+        if (in_array($user->role, ['farmer', 'vendor'])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'You already have a role.'
+            ], 400);
+        }
+
+        $validated = $request->validate([
+            'name' => 'required|string|max:255',
+            'vendor_type' => 'required|in:retailer,wholesaler',
+            'address' => 'nullable|string|max:255',
+            'about' => 'nullable|string|max:1000',
+            'logo' => 'nullable|string',
+        ]);
+
+        $roleRequest = RoleRequest::create([
+            'user_id' => $user->id,
+            'requested_role' => 'vendor',
+            'details' => $validated, // store validated info
+            'status' => 'pending',
+        ]);
+
         return response()->json([
-            'success' => false,
-            'message' => 'You already have a business role.'
-        ], 400);
+            'success' => true,
+            'message' => 'Vendor upgrade request submitted. Please await approval.',
+            'request' => $roleRequest
+        ]);
     }
-
-    $validator = Validator::make($request->all(), [
-        'name' => 'required|string|max:255',
-        'address' => 'nullable|string|max:255',
-        'about' => 'nullable|string|max:1000',
-    ]);
-
-    if ($validator->fails()) {
-        return response()->json([
-            'success' => false,
-            'message' => 'Validation failed',
-            'errors'  => $validator->errors(),
-        ], 422);
-    }
-
-    // Create role request
-    $roleRequest = \App\Models\RoleRequest::create([
-        'user_id' => $user->id,
-        'requested_role' => 'farmer',
-    ]);
-
-    return response()->json([
-        'success' => true,
-        'message' => 'Farmer upgrade request submitted. Awaiting admin approval.',
-        'request' => $roleRequest
-    ]);
-}
-
-public function upgradeToVendor(Request $request)
-{
-    $user = auth()->user();
-
-    if (in_array($user->role, ['farmer', 'vendor'])) {
-        return response()->json([
-            'success' => false,
-            'message' => 'You already have a vendor role.'
-        ], 400);
-    }
-
-    $validator = Validator::make($request->all(), [
-        'name' => 'required|string|max:255',
-        'vendor_type' => 'required|in:retailer,wholesaler',
-        'address' => 'nullable|string|max:255',
-        'about' => 'nullable|string|max:1000',
-    ]);
-
-    if ($validator->fails()) {
-        return response()->json([
-            'success' => false,
-            'message' => 'Validation failed',
-            'errors'  => $validator->errors(),
-        ], 422);
-    }
-
-    // Create role request
-    $roleRequest = \App\Models\RoleRequest::create([
-        'user_id' => $user->id,
-        'requested_role' => 'vendor',
-    ]);
-
-    return response()->json([
-        'success' => true,
-        'message' => 'Vendor upgrade request submitted. Awaiting admin approval.',
-        'request' => $roleRequest
-    ]);
-}
 
     // view user profile
 
@@ -408,17 +369,49 @@ public function upgradeToVendor(Request $request)
             return response()->json(['success' => false, 'message' => 'No pending role request'], 400);
         }
 
-        $user->update([
-            'role' => $user->requested_role,
-            'requested_role' => null,
-            'is_approved' => 1,
-        ]);
+        try {
+            DB::beginTransaction();
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Role request approved successfully',
-            'user' => $user
-        ], 200);
+            $roleRequest = RoleRequest::where('user_id', $user->id)
+                ->where('requested_role', $user->requested_role)
+                ->latest()
+                ->first();
+
+            if (!$roleRequest) {
+                throw new \Exception('Role request record not found.');
+            }
+
+            // Update user role
+            $user->update([
+                'role' => $user->requested_role,
+                'requested_role' => null,
+                'is_approved' => 1,
+            ]);
+
+            // Update role request status
+            $roleRequest->update([
+                'status' => 'accepted',
+                'approved_by' => $admin->id,
+            ]);
+
+            DB::commit();
+
+            $this->notifyRoleRequest($user->id, $user->role, 'accepted');
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Role request approved successfully',
+                'user' => $user
+            ], 200);
+
+        } catch (QueryException | \Exception $e) {
+            DB::rollBack();
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to approve role request: ' . $e->getMessage(),
+            ], 500);
+        }
     }
 
     public function rejectRoleRequest($id)
@@ -434,16 +427,44 @@ public function upgradeToVendor(Request $request)
             return response()->json(['success' => false, 'message' => 'No pending role request'], 400);
         }
 
-        $user->update([
-            'requested_role' => null,
-            'is_approved' => 0,
-        ]);
+        try {
+            DB::beginTransaction();
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Role request rejected successfully',
-            'user' => $user
-        ], 200);
+            $roleRequest = RoleRequest::where('user_id', $user->id)
+                ->where('requested_role', $user->requested_role)
+                ->latest()
+                ->first();
+
+            if ($roleRequest) {
+                $roleRequest->update([
+                    'status' => 'rejected',
+                    'approved_by' => $admin->id,
+                ]);
+            }
+
+            $user->update([
+                'requested_role' => null,
+                'is_approved' => 0,
+            ]);
+
+            DB::commit();
+
+            $this->notifyRoleRequest($user->id, $user->role, 'rejected');
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Role request rejected successfully',
+                'user' => $user
+            ], 200);
+
+        } catch (QueryException | \Exception $e) {
+            DB::rollBack();
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to reject role request: ' . $e->getMessage(),
+            ], 500);
+        }
     }
 
 }

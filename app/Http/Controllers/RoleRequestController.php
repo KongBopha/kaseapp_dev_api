@@ -8,6 +8,10 @@ use App\Models\Farm;
 use App\Models\Vendor;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use App\Services\NotificationService;
+use App\Constants\NotificationTypeEnum;
+use Illuminate\Support\Facades\DB;
+
 
 class RoleRequestController extends Controller
 {
@@ -25,7 +29,7 @@ class RoleRequestController extends Controller
     }
 
     // Admin approves or rejects a request
-public function update(Request $request, $id)
+ public function update(Request $request, $id, NotificationService $notificationService)
 {
     $request->validate([
         'status' => 'required|in:approved,rejected'
@@ -36,53 +40,48 @@ public function update(Request $request, $id)
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
     }
 
-    $roleRequest = RoleRequest::with('user')->findOrFail($id);
-    $user = $roleRequest->user;
+    try {
+        DB::beginTransaction();
 
-    if ($request->status === 'approved') {
-        // Update user's role
-        $user->update([
-            'role' => $roleRequest->requested_role
-        ]);
+        $roleRequest = RoleRequest::with('user')->findOrFail($id);
 
-         if ($roleRequest->requested_role === 'farmer') {
-            // Check if farm exists
-            if (!$user->farm) {
-                \App\Models\Farm::create([
-                    'user_id' => $user->id,
-                    'name' => $user->first_name . "'s Farm",
-                    'address' => $user->address ?? null,
-                    'about' => null,  
-                ]);
-            }
-        } elseif ($roleRequest->requested_role === 'vendor') {
-            if (!$user->vendor) {
-                \App\Models\Vendor::create([
-                    'user_id' => $user->id,
-                    'company_name' => $user->first_name . "'s Vendor",
-                    'vendor_type' => 'retailer',  
-                    'address' => $user->address ?? null,
-                    'description' => null,
-                ]);
-            }
+        // Call service to handle role request update, user role, and notification
+        $updatedRequest = $notificationService->notifyRoleRequest(
+            $roleRequest,
+            $request->status
+        );
+
+        if (!$updatedRequest) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to process role request. Notification or update failed.'
+            ], 500);
         }
 
-        $roleRequest->status = 'approved';
-        $roleRequest->approved_by = $admin->id;
+        // Reload user to get updated role
+        $updatedRequest->load('user');
 
-    } else {
-        // Rejected request
-        $roleRequest->status = 'rejected';
-        $roleRequest->approved_by = $admin->id;
+        DB::commit();
+
+        return response()->json([
+            'success' => true,
+            'message' => "Role request {$request->status} successfully.",
+            'request' => $updatedRequest
+        ], 200);
+
+    } catch (\Exception $e) {
+        DB::rollBack();
+        \Log::error("Role request update failed: {$e->getMessage()}");
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Something went wrong while processing the role request.'
+        ], 500);
     }
-
-    $roleRequest->save();
-
-    return response()->json([
-        'success' => true,
-        'message' => "Role request {$request->status} successfully.",
-        'request' => $roleRequest
-    ]);
 }
+
+
+
 
 }

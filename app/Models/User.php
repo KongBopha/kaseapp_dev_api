@@ -22,7 +22,10 @@ class User extends Authenticatable
         'role',
         'user_type',
         'address',
-        'password'
+        'password',
+        'reset_code', 
+        'reset_code_expires_at'
+
     ];
 
     

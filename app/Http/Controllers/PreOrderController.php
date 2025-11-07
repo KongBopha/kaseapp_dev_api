@@ -160,6 +160,7 @@ class PreOrderController extends Controller
                 'pre_order_id' => $preOrder->id,
                 'vendor_name'  => $preOrder->user->first_name . ' ' . $preOrder->user->last_name,
                 'product_name' => $preOrder->product->name,
+                'product_image'=> $preOrder->product->image,
                 'quantity'     => $preOrder->qty,
                 'location'     => $preOrder->location,
                 'note'         => $preOrder->note ?? 'No notes',

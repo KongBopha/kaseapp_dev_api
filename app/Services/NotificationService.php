@@ -6,7 +6,10 @@ use App\Models\Notification;
 use App\Models\PreOrder;
 use App\Models\OrderDetail;
 use App\Models\Farm;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use App\Models\Vendor;
+use App\Models\RoleRequest;
 use App\Constants\NotificationTypeEnum;
 
 class NotificationService
@@ -121,4 +124,91 @@ class NotificationService
     {
         $notification->update(['read_status' => true]);
     }
+
+    public function markAllAsRead(int $recipientId): void
+    {
+        Notification::where('recipient_id', $recipientId)
+            ->where('read_status', false)
+            ->update(['read_status' => true]);
+    }
+
+ public function notifyRoleRequest(RoleRequest $roleRequest, string $status)
+{
+    $admin = Auth::user();
+
+    if (!$admin || $admin->role !== 'admin') {
+        return null; // only admin can perform this
+    }
+
+    try {
+        DB::beginTransaction();
+
+        $user = $roleRequest->user;
+        $role = $roleRequest->requested_role;
+        $details = $roleRequest->details ? (array) $roleRequest->details : [];
+
+        // Normalize status: map controller 'approved' to 'accepted'
+        $normalizedStatus = $status === 'approved' ? 'accepted' : $status;
+
+        // Update role request status
+        $roleRequest->update([
+            'status' => $status, // keep 'approved' or 'rejected' in DB
+            'approved_by' => $admin->id,
+        ]);
+
+        // Only create vendor/farm and update user role if approved
+        if ($normalizedStatus === 'accepted') {
+            if ($role === 'vendor') {
+                Vendor::create([
+                    'owner_id' => $user->id,
+                    'name' => $details['name'] ?? '',
+                    'vendor_type' => $details['vendor_type'] ?? '',
+                    'address' => $details['address'] ?? '',
+                    'about' => $details['about'] ?? '',
+                    'logo' => $details['logo'] ?? '',
+                ]);
+            } elseif ($role === 'farmer') {
+                Farm::create([
+                    'owner_id' => $user->id,
+                    'name' => $details['name'] ?? '',
+                    'address' => $details['address'] ?? '',
+                    'about' => $details['about'] ?? '',
+                    'cover' => $details['cover'] ?? '',
+                    'logo' => $details['logo'] ?? '',
+                ]);
+            }
+
+            // Update user's role column
+            $user->update(['role' => $role]);
+        }
+
+        // Create notification
+        $type = $normalizedStatus === 'accepted' ? 'acceptance' : 'rejection';
+        $message = $normalizedStatus === 'accepted'
+            ? "Your request to become a {$role} has been accepted."
+            : "Your request to become a {$role} has been rejected.";
+
+        Notification::create([
+            'recipient_id' => $user->id,
+            'type' => $type,
+            'message' => $message,
+            'read_status' => false,
+            'vendor_id' => $role === 'vendor' && $normalizedStatus === 'accepted' ? $user->vendor->id ?? 0 : 0,
+            'farm_id' => $role === 'farmer' && $normalizedStatus === 'accepted' ? $user->farm->id ?? 0 : 0,
+            'pre_order_id' => null,
+            'reference_id' => null,
+        ]);
+
+        DB::commit();
+        return $roleRequest;
+
+    } catch (\Exception $e) {
+        DB::rollBack();
+        \Log::error("Failed to notify role request: {$e->getMessage()}");
+        return null;
+    }
+}
+
+
+
 }

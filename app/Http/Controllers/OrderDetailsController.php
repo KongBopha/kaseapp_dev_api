@@ -30,7 +30,7 @@ class OrderDetailsController extends Controller
     /**
      * Farmer submits an offer
      */
-    public function store(Request $request, $preOrderId)
+   public function store(Request $request, $preOrderId)
     {
         $user = Auth::user();
         if ($user->role !== 'farmer') {
@@ -78,31 +78,31 @@ class OrderDetailsController extends Controller
         }
     }
 /**
- * 🛒 Vendor confirms or rejects an offer
+ *  Vendor confirms or rejects an offer
  */
 public function confirmOffer(Request $request, $id)
 {
     $user = Auth::user();
 
-    // 🔐 Only vendors can confirm or reject offers
+    //  Only vendors can confirm or reject offers
     if ($user->role !== 'vendor') {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
     }
 
-    // 🧾 Load order detail with relationships
+    //  Load order detail with relationships
     $orderDetail = OrderDetail::with('preOrder.product')->findOrFail($id);
 
-    // ❌ Prevent vendor from confirming another vendor’s pre-order
+    //  Prevent vendor from confirming another vendor’s pre-order
     if ($orderDetail->preOrder->user_id !== $user->id) {
         return response()->json(['success' => false, 'message' => 'Not your pre-order'], 403);
     }
 
-    // ⛔ Prevent multiple confirmation attempts
+    //  Prevent multiple confirmation attempts
     if (in_array($orderDetail->offer_status, ['confirmed', 'rejected'])) {
         return response()->json(['success' => false, 'message' => 'Offer already handled'], 400);
     }
 
-    // 📝 Validate request input
+    //  Validate request input
     $data = $request->validate([
         'offer_status' => 'required|in:confirmed,rejected',
     ]);
@@ -110,27 +110,26 @@ public function confirmOffer(Request $request, $id)
     try {
         DB::beginTransaction();
 
-        // 🪄 Update offer status
+        // Update offer status
         $orderDetail->update($data);
         $orderDetail->refresh()->load('preOrder.product');
 
         if ($data['offer_status'] === 'confirmed') {
 
-            // 🧭 Extract core data
             $product           = $orderDetail->preOrder->product;
             $productId         = $product->id;
             $farmId            = $orderDetail->farm_id;
             $farmOfferQty      = floatval($orderDetail->fulfilled_qty);  // Farm’s total supply
             $vendorRequestQty  = floatval($orderDetail->preOrder->qty);
 
-            // 🧮 Calculate quantity distribution
+            //  Calculate quantity distribution
             $vendorQty  = min($farmOfferQty, $vendorRequestQty);
             $surplusQty = max(0, $farmOfferQty - $vendorRequestQty);
 
-            // 🌾 Calculate harvest date
+            //  Calculate harvest date
             $harvestedDate = $this->calculateHarvestDate($product->name);
 
-            // 🌱 Step 1: Create crop record (represents the full farm supply)
+            //  Step 1: Create crop record (represents the full farm supply)
             $crop = Crop::create([
                 'farm_id'       => $farmId,
                 'product_id'    => $productId,
@@ -141,13 +140,13 @@ public function confirmOffer(Request $request, $id)
                 'harvest_date'  => $harvestedDate,
             ]);
 
-            // 🔗 Step 2: Link crop to the order detail
+            //  Step 2: Link crop to the order detail
             $orderDetail->update([
                 'crop_id'       => $crop->id,
                 'fulfilled_qty' => $vendorQty,
             ]);
 
-            // 📦 Step 3: Create MarketSupply if surplus exists
+            //  Step 3: Create MarketSupply if surplus exists
             if ($surplusQty > 0) {
                 MarketSupply::create([
                     'farm_id'        => $farmId,
@@ -159,7 +158,7 @@ public function confirmOffer(Request $request, $id)
                 ]);
             }
 
-            // 🪄 Step 4: Update pre-order status & notify farm
+            //  Step 4: Update pre-order status & notify farm
             $preOrderStatus = $this->preOrderService->updatePreOrderStatus($orderDetail->pre_order_id);
             if (!$preOrderStatus) {
                 throw new \Exception("Failed to update status in pre-order");
@@ -184,8 +183,6 @@ public function confirmOffer(Request $request, $id)
         return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
     }
 }
-
-
 
 
 /**
@@ -278,6 +275,7 @@ public function filterOrderDetails(Request $request)
             'vendorName'     => $farm->name ?? 'Unknown',          // farm name
             'user_id'        => $farmerUser->id ?? 0,              // farmer's user ID
             'product_name'   => $preOrder->product->name,
+            'product_image'  => $preOrder->product->image ?? null, 
             'requested_qty'  => $preOrder->qty,
             'fulfilled_qty'  => $orderDetail->fulfilled_qty,
             'location'       => $preOrder->location,
