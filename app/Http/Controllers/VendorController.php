@@ -49,9 +49,9 @@ class VendorController extends Controller
             $validated['logo'] = $uploadService->uploadFile(
                 $request->file('logo'),
                 'vendor_logos'
-        );
+            );
         }
-
+        
         $vendor->update($validated);
 
         return response()->json([

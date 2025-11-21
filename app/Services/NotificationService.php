@@ -51,74 +51,130 @@ class NotificationService
         }
     }
 
-    // Notify vendor when a farm responds
-    public function notifyVendor(OrderDetail $orderDetail): ?Notification
-    {
-        $vendorUserId = $orderDetail->preOrder->user_id;
-        $farm = $orderDetail->farm;
-        if (!$farm) return null;
+  // Notify vendor when a farm responds to a pre-order
+public function notifyVendor(OrderDetail $orderDetail): ?Notification
+{
+    $vendorUserId = $orderDetail->preOrder->user_id;
+    $farm = $orderDetail->farm;
+    if (!$farm) return null;
 
-        $typeMap = [
-            'accepted' => NotificationTypeEnum::ACCEPTANCE->value,
-            'rejected' => NotificationTypeEnum::REJECTION->value,
-        ];
+    // Map offer status to notification type
+    $typeMap = [
+        'accepted' => NotificationTypeEnum::ACCEPTANCE->value,
+        'rejected' => NotificationTypeEnum::REJECTION->value,
+    ];
 
-        $type = $typeMap[$orderDetail->offer_status] ?? NotificationTypeEnum::OFFER->value;
+    $type = $typeMap[$orderDetail->offer_status] ?? NotificationTypeEnum::OFFER->value;
 
-        if ($this->exists($orderDetail->pre_order_id, $vendorUserId, $type)) return null;
-
-        $message = match ($orderDetail->offer_status) {
-            'accepted' => "Farm {$farm->name} accepted {$orderDetail->fulfilled_qty} kg.",
-            'rejected' => "Farm {$farm->name} rejected your request.",
-            default    => "Farm {$farm->name} made an offer of {$orderDetail->fulfilled_qty} kg.",
-        };
-
-        return $this->create([
-            'recipient_id' => $vendorUserId,
-            'vendor_id'    => $orderDetail->preOrder->user_id,
-            'farm_id'      => $farm->id,
-            'pre_order_id' => $orderDetail->pre_order_id,
-            'reference_id' => $orderDetail->id,
-            'type'         => $type,
-            'message'      => $message,
-            'read_status'  => false,
-        ]);
+    // Prevent duplicate notifications for the same offer (order detail)
+    if (Notification::where('pre_order_id', $orderDetail->pre_order_id)
+        ->where('recipient_id', $vendorUserId)
+        ->where('type', $type)
+        ->where('reference_id', $orderDetail->id)
+        ->exists()) {
+        return null;
     }
 
-    // Notify farmer when vendor responds
-    public function notifyFarm(OrderDetail $orderDetail): ?Notification
-    {
-        $farm = $orderDetail->farm;
-        if (!$farm) return null;
+    // Build the message based on the offer status
+    $message = match ($orderDetail->offer_status) {
+        'accepted' => "Farm {$farm->name} accepted {$orderDetail->fulfilled_qty} kg.",
+        'rejected' => "Farm {$farm->name} rejected your request.",
+        default    => "Farm {$farm->name} made an offer of {$orderDetail->fulfilled_qty} kg.",
+    };
 
-        $farmerUserId = $farm->owner_id;
+    // Create and return the notification
+    return $this->create([
+        'recipient_id' => $vendorUserId,
+        'vendor_id'    => $orderDetail->preOrder->user_id,
+        'farm_id'      => $farm->id,
+        'pre_order_id' => $orderDetail->pre_order_id,
+        'reference_id' => $orderDetail->id, // unique per offer
+        'type'         => $type,
+        'message'      => $message,
+        'read_status'  => false,
+    ]);
+}
 
-        $typeMap = [
-            'confirmed' => NotificationTypeEnum::ACCEPTANCE->value,
-            'rejected'  => NotificationTypeEnum::REJECTION->value,
-        ];
 
-        $type = $typeMap[$orderDetail->offer_status] ?? NotificationTypeEnum::OFFER->value;
+    // // Notify farmer when vendor responds
+    // public function notifyFarm(OrderDetail $orderDetail): ?Notification
+    // {
+    //     $farm = $orderDetail->farm;
+    //     if (!$farm) return null;
 
-        if ($this->exists($orderDetail->pre_order_id, $farmerUserId, $type)) return null;
+    //     $farmerUserId = $farm->owner_id;
 
-        $message = match ($orderDetail->offer_status) {
-            'confirmed' => "Vendor confirmed your supply of {$orderDetail->fulfilled_qty} kg.",
-            'rejected'  => "Vendor rejected your offer.",
-            default     => "Your offer is updated.",
-        };
+    //     $typeMap = [
+    //         'confirmed' => NotificationTypeEnum::ACCEPTANCE->value,
+    //         'rejected'  => NotificationTypeEnum::REJECTION->value,
+    //     ];
 
+    //     $type = $typeMap[$orderDetail->offer_status] ?? NotificationTypeEnum::OFFER->value;
+
+    //     if ($this->exists($orderDetail->pre_order_id, $farmerUserId, $type)) return null;
+
+    //     $message = match ($orderDetail->offer_status) {
+    //         'confirmed' => "Vendor confirmed your supply of {$orderDetail->fulfilled_qty} kg.",
+    //         'rejected'  => "Vendor rejected your offer.",
+    //         default     => "Your offer is updated.",
+    //     };
+
+    //     return $this->create([
+    //         'recipient_id' => $farmerUserId,
+    //         'vendor_id'    => $orderDetail->preOrder->user_id,
+    //         'farm_id'      => $farm->id,
+    //         'pre_order_id' => $orderDetail->pre_order_id,
+    //         'reference_id' => $orderDetail->id,
+    //         'type'         => $type,
+    //         'message'      => $message,
+    //         'read_status'  => false,
+    //     ]);
+    // }
+public function notifyFarm(OrderDetail $orderDetail, ?string $customMessage = null): ?Notification
+{
+    $farm = $orderDetail->farm;
+    if (!$farm) return null;
+
+    $farmerUserId = $farm->owner_id;
+
+    if ($customMessage !== null) {
         return $this->create([
             'recipient_id' => $farmerUserId,
             'vendor_id'    => $orderDetail->preOrder->user_id,
             'farm_id'      => $farm->id,
             'pre_order_id' => $orderDetail->pre_order_id,
             'reference_id' => $orderDetail->id,
-            'type'         => $type,
-            'message'      => $message,
+            'type'         => NotificationTypeEnum::REJECTION->value,
+            'message'      => $customMessage,
             'read_status'  => false,
         ]);
     }
+
+    // Default system messages
+    $typeMap = [
+        'confirmed' => NotificationTypeEnum::ACCEPTANCE->value,
+        'rejected'  => NotificationTypeEnum::REJECTION->value,
+    ];
+
+    $type = $typeMap[$orderDetail->offer_status] ?? NotificationTypeEnum::OFFER->value;
+
+    $message = match ($orderDetail->offer_status) {
+        'confirmed' => "Vendor confirmed your supply of {$orderDetail->fulfilled_qty} kg.",
+        'rejected'  => "Vendor rejected your offer.",
+        default     => "Your offer is updated.",
+    };
+
+    return $this->create([
+        'recipient_id' => $farmerUserId,
+        'vendor_id'    => $orderDetail->preOrder->user_id,
+        'farm_id'      => $farm->id,
+        'pre_order_id' => $orderDetail->pre_order_id,
+        'reference_id' => $orderDetail->id,
+        'type'         => $type,
+        'message'      => $message,
+        'read_status'  => false,
+    ]);
+}
 
     public function markAsRead(Notification $notification): void
     {
@@ -131,6 +187,7 @@ class NotificationService
             ->where('read_status', false)
             ->update(['read_status' => true]);
     }
+
 
  public function notifyRoleRequest(RoleRequest $roleRequest, string $status)
 {
@@ -152,7 +209,7 @@ class NotificationService
 
         // Update role request status
         $roleRequest->update([
-            'status' => $status, // keep 'approved' or 'rejected' in DB
+            'status' => $status,  
             'approved_by' => $admin->id,
         ]);
 
@@ -193,8 +250,8 @@ class NotificationService
             'type' => $type,
             'message' => $message,
             'read_status' => false,
-            'vendor_id' => $role === 'vendor' && $normalizedStatus === 'accepted' ? $user->vendor->id ?? 0 : 0,
-            'farm_id' => $role === 'farmer' && $normalizedStatus === 'accepted' ? $user->farm->id ?? 0 : 0,
+            'vendor_id' => $role === 'vendor' && $normalizedStatus === 'accepted' ? $user->vendor->id ?? null : null,
+            'farm_id' => $role === 'farmer' && $normalizedStatus === 'accepted' ? $user->farm->id ?? null : null,
             'pre_order_id' => null,
             'reference_id' => null,
         ]);
@@ -208,7 +265,5 @@ class NotificationService
         return null;
     }
 }
-
-
 
 }

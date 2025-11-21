@@ -35,6 +35,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'auth' => \Illuminate\Auth\Middleware\Authenticate::class,
             'role' => \App\Http\Middleware\CheckRole::class, 
             'check.access'=> \App\Http\Middleware\CheckAccessToken::class,]);
+            
     })
 
     ->withExceptions(function (Exceptions $exceptions): void {

@@ -113,16 +113,18 @@ class NotificationController extends Controller
                     ]
                     : null,
                 'vendor' => [
-                    'user_info' => $first->preOrder->user
+                    'user_info' => ($first->preOrder && $first->preOrder->user)
                         ? [
                             'name'  => trim(($first->preOrder->user->first_name ?? '') . ' ' . ($first->preOrder->user->last_name ?? '')),
                             'phone' => $first->preOrder->user->phone ?? null,
                         ]
                         : null,
-                    'vendor_info' => $first->preOrder->user
+
+                    'vendor_info' => ($first->preOrder && $first->preOrder->user)
                         ? Vendor::where('owner_id', $first->preOrder->user->id)->first(['id', 'name', 'address'])
                         : null,
                 ],
+
                 'farm'          => $first->farm,
                 'notifications' => $items->map(fn($n) => [
                     'id'          => $n->id,

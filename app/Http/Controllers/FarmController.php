@@ -42,11 +42,17 @@ class FarmController extends Controller
         $validated = $validator->validated();
 
         if ($request->hasFile('cover')) {
-            $validated['cover'] = $uploadService->uploadFile($request->file('cover'), 'farm_covers');
+            $validated['cover'] = $uploadService->uploadFile(
+                $request->file('cover'),
+                'farm_covers'
+            );
         }
 
         if ($request->hasFile('logo')) {
-            $validated['logo'] = $uploadService->uploadFile($request->file('logo'), 'farm_logos');
+            $validated['logo'] = $uploadService->uploadFile(
+                $request->file('logo'),
+                'farm_logos'
+            );
         }
 
         $farm->update($validated);

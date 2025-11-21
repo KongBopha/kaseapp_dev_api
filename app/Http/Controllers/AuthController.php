@@ -16,6 +16,7 @@ use App\Services\FileUploadService;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\Log;
 
 
 class AuthController extends Controller
@@ -114,7 +115,7 @@ public function login(Request $request)
     $validator = Validator::make($request->all(), [
         'login' => 'required|string|max:255',
         'password' => 'required|string',
-
+ 
     ]);
 
     if ($validator->fails()) {
@@ -132,12 +133,16 @@ public function login(Request $request)
             ->orWhere('email', $validated['login'])
             ->first();
 
-    if (!$user || !Hash::check($validated['password'], $user->password)) {
+    if (!$user || !Hash::check($validated['password'],
+     $user->password)) {
         return response()->json([
             'success' => false,
             'message' => 'Invalid credentials',
         ], 401);
     }
+    \Log::info("Login input: " . $validated['login']);
+    \Log::info("Password input: " . $validated['password']);
+
 
     // Create token
     $token = $user->createToken(
@@ -183,6 +188,8 @@ public function login(Request $request)
             'last_name' => 'sometimes|string|max:255',
             'sex' => 'sometimes|in:male,female,other',
             'address' => 'sometimes|string|max:255',
+            'email' => 'sometimes|string|email|max:255|unique:users,email,'.$user->id,
+            'phone' => 'sometimes|string|max:50|unique:users,phone,'.$user->id,
             'profile_url' => 'sometimes|image|mimes:jpg,png,jpeg|max:2048',
         ]);
 
@@ -196,8 +203,12 @@ public function login(Request $request)
         $validated = $validator->validated();
 
         if ($request->hasFile('profile_url')) {
-            $validated['profile_url'] = $uploadService->uploadFile($request->file('profile_url'), 'profile_photos');
+            $validated['profile_url'] = $uploadService->uploadFile(
+                $request->file('profile_url'),
+                'profile_photos'
+            );
         }
+
 
         $user->update($validated);
 
@@ -282,8 +293,15 @@ public function login(Request $request)
             'vendor_type' => 'required|in:retailer,wholesaler',
             'address' => 'nullable|string|max:255',
             'about' => 'nullable|string|max:1000',
-            'logo' => 'nullable|string',
+            'logo' => 'nullable|mimes:png,jpg,jpeg|max:2048',
         ]);
+
+        if ($request->hasFile('profile_url')) {
+            $validated['profile_url'] = $uploadService->uploadFile(
+                $request->file('profile_url'),
+                'profile_photos'
+            );
+        }
 
         $roleRequest = RoleRequest::create([
             'user_id' => $user->id,

@@ -29,6 +29,7 @@ Route::prefix('auth')->group(function () {
 });
 
 Route::middleware('auth:sanctum')->group(function () {
+    
     // user info
     Route::get('auth/me', [AuthController::class, 'me']);
     Route::post('auth/logout', [AuthController::class, 'logout']);
@@ -70,7 +71,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/market-supplies/listing',[MarketSupplyController::class,'index']);
         Route::get('/market-supplies/{id}', [MarketSupplyController::class, 'show']);
         Route::post('/pre-orders/from-surplus', [PreOrderController::class, 'storeFromSurplus']);
-
+        Route::get('/vendor/pre-orders/{preOrderId}/offers', [PreOrderController::class, 'getVendorOffers']);
     });
 
     // farmer-only routes

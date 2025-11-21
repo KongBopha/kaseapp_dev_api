@@ -26,7 +26,7 @@ class PreOrder extends Model
         return $this->belongsTo(Product::class,'product_id');
     }
     public function crop(){
-        return $this->belongsTo(crops::class, 'crop_id');
+        return $this->belongsTo(Crop::class, 'crop_id');
     }
         public function orderDetails() {
         return $this->hasMany(OrderDetail::class);

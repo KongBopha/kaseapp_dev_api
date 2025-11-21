@@ -13,6 +13,7 @@ use App\Models\MarketSupply;
 use Carbon\Carbon;
 use App\Services\NotificationService;
 use App\Services\PreOrderService;
+use App\Constants\NotificationTypeEnum;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\DB;
@@ -46,19 +47,48 @@ class PreOrderController extends Controller
             'note_text'     => 'nullable|string',
         ]);
 
-        //validate the date
+                //validate the date
+        $product = Product::find($data['product_id']);
 
-        if(!empty($data['delivery_date'])){
-            $deliveryDate = Carbon::parse($data['delivery_date'])->startOfDay();
+            // Only validate delivery date if vendor provides it
+            if (!empty($data['delivery_date'])) {
 
-        $today = Carbon::today();
-        if ($deliveryDate->lt($today)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Delivery date must be today or a future date.',
-            ], 422);
-        }
-        }
+                $deliveryDate = Carbon::parse($data['delivery_date'])->startOfDay();
+                $today = Carbon::today();
+
+                // 1. Delivery date cannot be in the past
+                if ($deliveryDate->lt($today)) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => "Delivery date cannot be in the past.",
+                    ], 422);
+                }
+
+                // 2. Delivery date must respect crop growth duration
+                $estimatedHarvestDate = $this->calculateHarvestDate($product->name);
+                if ($deliveryDate->lt($estimatedHarvestDate)) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => "Delivery date must be at least " 
+                            . $estimatedHarvestDate->format('Y-m-d')
+                            . " based on $product->name’s growing period.",
+                    ], 422);
+                }
+            }
+
+
+
+        // if(!empty($data['delivery_date'])){
+        //     $deliveryDate = Carbon::parse($data['delivery_date'])->startOfDay();
+
+        // $today = Carbon::today();
+        // if ($deliveryDate->lt($today)) {
+        //     return response()->json([
+        //         'success' => false,
+        //         'message' => 'Delivery date must be today or a future date.',
+        //     ], 422);
+        // }
+        // }
 
         $data['user_id'] = $user->id; // vendor
 
@@ -83,6 +113,20 @@ class PreOrderController extends Controller
             ], 500);
         }
     }
+    private function calculateHarvestDate(string $productName): \Carbon\Carbon
+{
+    $productName = strtolower($productName);
+
+    return match (true) {
+        str_contains($productName, 'tomato') => now()->addDays(65),
+        str_contains($productName, 'cherry') => now()->addDays(55),
+        str_contains($productName, 'cucumber') => now()->addDays(45),
+        str_contains($productName, 'eggplant') => now()->addDays(75),
+        str_contains($productName, 'corn') => now()->addDays(80),
+        str_contains($productName, 'carrot') => now()->addDays(70),
+        default => now()->addDays(60), // fallback for other crops
+    };
+}
  
     /**
      * List order details for the authenticated farmer
@@ -116,6 +160,9 @@ class PreOrderController extends Controller
             $query = $this->buildFarmerQuery($user);
         } elseif ($user->role === 'vendor') {
             $query = $this->buildVendorQuery($user, $request);
+            if ($request->has('exclude_pending') && $request->boolean('exclude_pending')) {
+            $query->where('status', '!=', 'pending');
+            }
         }
 
         $preOrders = $query->orderBy('created_at', 'desc')->paginate(5);
@@ -173,38 +220,63 @@ class PreOrderController extends Controller
     /**
      * Update a pre-order (Vendor only, status = pending)
      */
-    public function update(Request $request, $id)
-    {
-        $user = auth()->user();
-        if (!$user || $user->role !== 'vendor') {
-            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
-        }
-
-        $preOrder = PreOrder::where('id', $id)
-            ->where('user_id', $user->id)
-            ->where('status', 'pending')
-            ->first();
-
-        if (!$preOrder) {
-            return response()->json(['success' => false, 'message' => 'Pre-order not found or cannot be edited'], 404);
-        }
-
-        if ($preOrder->orderDetails()->exists()) {
-            return response()->json(['success' => false, 'message' => 'Cannot edit pre-order after farm responses'], 403);
-        }
-
-        $validated = $request->validate([
-            'product_id'    => 'sometimes|exists:products,id',
-            'qty'           => 'sometimes|integer|min:1',
-            'delivery_date' => 'nullable|date|after_or_equal:today',
-            'location'      => 'nullable|string|max:255',
-            'note_text'     => 'nullable|string|max:500',
-        ]);
-
-        $preOrder->update($validated);
-
-        return response()->json(['success' => true, 'message' => 'Pre-order updated', 'data' => $preOrder]);
+public function update(Request $request, $id, NotificationService $notificationService)
+{
+    $user = auth()->user();
+    if (!$user || $user->role !== 'vendor') {
+        return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
+
+    $preOrder = PreOrder::where('id', $id)
+        ->where('user_id', $user->id)
+        ->where('status', 'pending')
+        ->first();
+
+    if (!$preOrder) {
+        return response()->json(['success' => false, 'message' => 'Pre-order not found or cannot be edited'], 404);
+    }
+
+    if ($preOrder->orderDetails()->exists()) {
+        return response()->json(['success' => false, 'message' => 'Cannot edit pre-order after farm responses'], 403);
+    }
+
+    $validated = $request->validate([
+        'product_id'    => 'sometimes|exists:products,id',
+        'qty'           => 'sometimes|integer|min:1',
+        'delivery_date' => 'nullable|date|after_or_equal:today',
+        'location'      => 'nullable|string|max:255',
+        'note_text'     => 'nullable|string|max:500',
+    ]);
+
+    $preOrder->update($validated);
+
+    // ================================
+    // Send notification to all farms
+    // ================================
+    $farms = Farm::with('owner')->get();
+
+    foreach ($farms as $farm) {
+        $recipientId = $farm->owner_id;
+        $productName = $preOrder->product?->name ?? 'product';
+
+        $notificationService->create([
+            'recipient_id' => $recipientId,
+            'vendor_id'    => $preOrder->user_id,
+            'farm_id'      => $farm->id,
+            'pre_order_id' => $preOrder->id,
+            'type'         => NotificationTypeEnum::PRE_ORDER->value,
+            'message'      => "Updated pre-order: {$preOrder->qty} kg of {$productName}",
+            'read_status'  => false,
+        ]);
+    }
+
+    return response()->json([
+        'success' => true,
+        'message' => 'Pre-order updated and notifications sent',
+        'data' => $preOrder
+    ]);
+}
+
 
     /**
      * Delete/Cancel a pre-order (Vendor only, status = pending)
@@ -255,8 +327,17 @@ class PreOrderController extends Controller
             return response()->json(['success' => false, 'message' => 'Pre-order not found'], 404);
         }
 
+        // Check if order details exist
+        if ($preOrder->orderDetails()->exists()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Cannot view pre-order because farms have already responded.'
+            ], 403);
+        }
+
         return response()->json(['success' => true, 'data' => $preOrder]);
     }
+
 
     public function storeFromSurplus(Request $request)
     {
@@ -306,19 +387,19 @@ class PreOrderController extends Controller
                 'location'      => $data['location'] ?? null,
                 'note'          => $data['note'] ?? 'Surplus order',
                 'delivery_date' => $data['delivery_date'],
-                'status'        => 'pending',
+                'status'        => 'fulfilled',
             ]);
 
             $orderDetail = OrderDetail::create([
                 'pre_order_id'   => $preOrder->id,
                 'farm_id'        => $data['farm_id'],
-                'product_id'     => $crop->product_id,
                 'crop_id'        => $crop->id,
                 'fulfilled_qty'  => $data['quantity'],
                 'unit'           => $data['unit'],
                 'offer_status'   => 'confirmed',
                 'description'    => 'Surplus offer',
             ]);
+            $this->notificationService->notifyFarm($orderDetail, "Vendor {$userId} has placed an order for your product from surplus.");
 
             $supply->available_qty -= $data['quantity'];
             $supply->save();
@@ -429,18 +510,102 @@ class PreOrderController extends Controller
         ]);
     }
 
-    public function trendingProducts() {
+public function trendingProducts() {
+    // Total number of pre-orders
+    $totalPreOrders = PreOrder::count();
+
+    // Get top 3 products with pre-order count
     $trending = PreOrder::select('product_id')
         ->selectRaw('COUNT(*) as pre_order_count')
         ->groupBy('product_id')
         ->orderByDesc('pre_order_count')
         ->with('product') // eager load product details
-        ->take(3) // top 5 trending products
+        ->take(3)
         ->get();
+
+    // Convert counts to percentages
+    $trending->transform(function ($item) use ($totalPreOrders) {
+        $item->pre_order_percentage = $totalPreOrders > 0 
+            ? round(($item->pre_order_count / $totalPreOrders) * 100, 2)
+            : 0;
+        return $item;
+    });
 
     return response()->json([
         'success' => true,
         'data' => $trending
     ]);
+    }
+public function getVendorOffers($preOrderId)
+{
+    $vendor = auth()->user();
+
+    if (!$vendor || $vendor->role !== 'vendor') {
+        return response()->json([
+            'success' => false,
+            'message' => 'Unauthorized',
+        ], 403);
+    }
+
+    // Ensure vendor owns this pre-order
+    $preOrder = PreOrder::where('id', $preOrderId)
+        ->where('user_id', $vendor->id)
+        ->with(['product'])
+        ->first();
+
+    if (!$preOrder) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Pre-order not found',
+        ], 404);
+    }
+
+    // Get ONLY order details for this pre-order
+    $orderDetails = OrderDetail::with(['farm.owner'])
+        ->where('pre_order_id', $preOrderId)
+        ->get();
+
+    $offers = $orderDetails->map(function($detail) {
+        return [
+            'order_detail_id' => $detail->id,
+            'farm_id'         => $detail->farm_id,
+            'farm_name'       => $detail->farm->name ?? 'Unknown',
+            'farmer_name'     => $detail->farm->owner->first_name ?? '',
+            'fulfilled_qty'   => $detail->fulfilled_qty,
+            'status'          => $detail->offer_status,
+            'note'            => $detail->description,
+        ];
+    });
+
+    return response()->json([
+        'success' => true,
+        'pre_order' => [
+            'id'            => $preOrder->id,
+            'product_name'  => $preOrder->product->name ?? '',
+            'requested_qty' => $preOrder->qty,
+        ],
+        'offers' => $offers,
+    ]);
 }
+
+    public function rejectPreorder(Request $request, $preOrderId)
+    {
+        $user = auth()->user();
+        if (!$user || $user->role !== 'vendor') {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+        }
+
+        $preOrder = PreOrder::where('id', $preOrderId)
+            ->where('user_id', $user->id)
+            ->first();
+
+        if (!$preOrder) {
+            return response()->json(['success' => false, 'message' => 'Pre-order not found'], 404);
+        }
+
+        $preOrder->update(['status' => 'cancelled']);
+
+        return response()->json(['success' => true, 'message' => 'Pre-order rejected successfully']);
+
+    }
 }
